@@ -1,3 +1,16 @@
+"""Text state renderer.
+
+This module belongs to the presentation layer. It projects the current
+`GameState` into a readable string and should not mutate game data or advance
+time. It depends on building-type `SYMBOL` values, map terrain queries, and
+enemy route positions; `main.py` decides when to call `render()`.
+
+Cell drawing has a defined priority: buildings cover enemies, enemies cover
+routes, routes cover mine sites and high ground, and empty ground is last.
+New renderable entities must account for that priority and for how
+`BUILDING_SYMBOLS` uses subclass `isinstance()` matching.
+"""
+
 from __future__ import annotations
 
 from grid_td.buildings import (
@@ -14,7 +27,10 @@ from grid_td.position import Position
 
 
 class TextRenderer:
+    """Generate a plain-text snapshot with status line and character map."""
+
     BUILDING_SYMBOLS = {
+        # Use types instead of strings to avoid duplicating the building kind map.
         Core: Core.SYMBOL,
         Mine: Mine.SYMBOL,
         PowerPlant: PowerPlant.SYMBOL,
@@ -25,6 +41,13 @@ class TextRenderer:
     }
 
     def render(self, game: GameState) -> str:
+        """Render the current game state.
+
+        Returns:
+            The first line is a wave, time, resource, and power summary. Later
+            lines correspond to map rows. This method only reads state; calling
+            it repeatedly on the same state should produce the same text.
+        """
         rows = []
         enemy_positions = {
             enemy.position_on_route(game.grid_map.route)
@@ -66,6 +89,7 @@ class TextRenderer:
         return header + "\n" + "\n".join(rows)
 
     def _building_symbol(self, building: object) -> str:
+        """Return a display character by concrete building type, or `?`."""
         for building_type, symbol in self.BUILDING_SYMBOLS.items():
             if isinstance(building, building_type):
                 return symbol

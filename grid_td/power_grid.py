@@ -1,3 +1,19 @@
+"""Power-grid connectivity and shared efficiency calculation.
+
+This module sits between game state and building entities. `GameState` calls
+`PowerGrid.calculate()` after building and on every simulation step. That
+method starts from the core, finds adjacent buildings, totals connected supply
+and demand, then writes connection flags and efficiency back to every
+`Building`. The returned `PowerReport` is read by the status line and tests.
+
+The current algorithm is a four-way breadth-first search (BFS), not the
+connection-radius model planned in the design document. Only buildings in
+adjacent occupied cells form the network. Efficiency is a shared multiplier
+for all connected buildings, with no per-building priority allocation. Any
+connectivity-rule change can affect towers, mines, wave difficulty, and
+rendered state at the same time.
+"""
+
 from __future__ import annotations
 
 from collections import deque
@@ -10,16 +26,35 @@ from grid_td.position import Position
 
 @dataclass(frozen=True)
 class PowerReport:
-    connected_count: int
-    total_supply: int
-    total_demand: int
-    efficiency: float
+    """Read-only summary of one power-grid calculation."""
+
+    connected_count: int  # Number of buildings reachable from the core.
+    total_supply: int  # Total supply from connected buildings.
+    total_demand: int  # Total demand from connected buildings.
+    efficiency: float  # Shared efficiency multiplier from this calculation.
 
 
 class PowerGrid:
-    MIN_EFFICIENCY = 0.30
+    """Calculate grid connection and work efficiency from building occupancy."""
+
+    MIN_EFFICIENCY = 0.30  # Minimum efficiency with positive but insufficient supply.
 
     def calculate(self, grid_map: GridMap, buildings: list[Building]) -> PowerReport:
+        """Calculate grid state and update every building in place.
+
+        Args:
+            grid_map: Map that provides the core root and coordinate rules.
+            buildings: All buildings in the current game; list order does not
+                affect connectivity.
+
+        Returns:
+            A `PowerReport` that counts only buildings connected from the core.
+
+        Side effects:
+            Overwrites each building's `connected_to_grid` and `efficiency`.
+            Disconnected buildings are explicitly set to 0 efficiency. Callers
+            should run this before reading tower or mine behavior.
+        """
         by_position = {building.position: building for building in buildings}
         connected_positions = self._find_connected_positions(grid_map, by_position)
 
@@ -46,6 +81,13 @@ class PowerGrid:
         grid_map: GridMap,
         by_position: dict[Position, Building],
     ) -> set[Position]:
+        """Run four-way BFS from the core and return reachable positions.
+
+        Empty coordinates stop the current branch. The method does not check
+        map bounds because a neighbor is only queued when it exists in
+        `by_position`. If the core has no corresponding building, the result
+        is empty.
+        """
         connected: set[Position] = set()
         queue: deque[Position] = deque([grid_map.core_position])
 
@@ -67,6 +109,12 @@ class PowerGrid:
         return connected
 
     def _calculate_efficiency(self, total_supply: int, total_demand: int) -> float:
+        """Calculate the shared whole-grid efficiency from supply and demand.
+
+        No demand counts as full efficiency. Sufficient supply returns 1, zero
+        supply returns 0, and all other cases use supply/demand clamped above
+        `MIN_EFFICIENCY`.
+        """
         if total_demand <= 0:
             return 1.0
         if total_supply >= total_demand:

@@ -1,9 +1,17 @@
+# Python bytecode and interpreter-generated caches.
 __pycache__/
 *.py[cod]
+
+# Caches created by test, type-checking, and linting tools.
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Local Python environments; dependencies are not vendored in this repository.
 .venv/
 venv/
+
+# Local design notes are useful during development but are intentionally kept
+# out of the tracked source tree.
 GAME_DESIGN.md
 
