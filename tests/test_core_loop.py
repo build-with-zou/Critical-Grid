@@ -71,6 +71,19 @@ class CoreLoopTest(unittest.TestCase):
         self.assertEqual(game.gold, gold_before + 40)
         self.assertGreater(game.debt, 0)
 
+    def test_buy_wave_intel_spends_gold_and_requires_gold(self) -> None:
+        """Buying intel should expose the briefing and enforce its price."""
+        game = GameState(create_demo_map())
+
+        briefing = game.buy_wave_intel()
+
+        self.assertEqual(briefing, "Basic enemies.")
+        self.assertEqual(game.gold, 172)
+
+        poor_game = GameState(create_demo_map(), gold=0)
+        with self.assertRaises(ValueError):
+            poor_game.buy_wave_intel()
+
     def test_building_on_illegal_position(self) -> None:
         """Build placement rules should reject blocked or otherwise invalid cells."""
         game = GameState(create_demo_map())
