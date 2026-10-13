@@ -158,6 +158,23 @@ class CoreLoopTest(unittest.TestCase):
         self.assertEqual(game.enemies, [])
         self.assertTrue(game.waiting_for_next_wave)
 
+    def test_end_wave_and_start_next_wave_transition(self) -> None:
+        """Wave settlement should advance the index and restart the runner."""
+        game = GameState(create_demo_map())
+
+        game.step(30.0)
+        message = game.end_wave()
+
+        self.assertIn("Wave ended.", message)
+        self.assertEqual(game.wave_index, 1)
+        self.assertIsNone(game.wave_runner)
+        self.assertEqual(game.current_wave_name, "Wave 2")
+
+        game.start_next_wave()
+
+        self.assertIsNotNone(game.wave_runner)
+        self.assertEqual(game.current_wave_name, "Wave 2")
+
     def test_demo_wave_can_advance_without_crashing(self) -> None:
         """The default map and basic defense should run for multiple steps."""
         game = GameState(create_demo_map())
