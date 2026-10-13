@@ -24,15 +24,9 @@ from grid_td.game_state import GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.board_view import BoardView
+from gui.hud import HUD
 from gui.sidebar import Sidebar
-from gui.styles import (
-    BACKGROUND,
-    FPS,
-    MUTED,
-    PANEL,
-    TEXT,
-    WINDOW_SIZE,
-)
+from gui.styles import BACKGROUND, FPS, WINDOW_SIZE
 
 
 class CriticalGridGUI:
@@ -51,6 +45,7 @@ class CriticalGridGUI:
         self.game = GameState(create_demo_map())
         self.board = BoardView(self.game, self.screen, self.font)
         self.sidebar = Sidebar(self.screen, self.manager, self.small_font, self.font)
+        self.hud = HUD(self.screen, self.font, self.small_font, self.title_font)
         self.running = False
         self.selected_kind: str | None = None
         self.selected_tower_id: int | None = None
@@ -70,7 +65,10 @@ class CriticalGridGUI:
             if self.selected_kind is None:
                 self.message = "Build cancelled. Click the map to inspect."
             else:
-                self.message = f"Build mode: {self.selected_kind.replace('_', ' ')}. Click a map cell."
+                self.message = (
+                    f"Build mode: {self.selected_kind.replace('_', ' ')}. "
+                    "Click a map cell."
+                )
         elif button == self.sidebar.run_button:
             if self.game.is_finished:
                 self.message = self.game.result_message
@@ -106,7 +104,10 @@ class CriticalGridGUI:
             if building_at_position is None:
                 self.message = f"Terrain at ({position.x}, {position.y}) selected."
             else:
-                self.message = f"{building_at_position.name} at ({position.x}, {position.y}) selected."
+                self.message = (
+                    f"{building_at_position.name} at "
+                    f"({position.x}, {position.y}) selected."
+                )
             return
         if self.game.is_finished:
             self.message = self.game.result_message
@@ -133,7 +134,10 @@ class CriticalGridGUI:
         except ValueError as error:
             self.message = str(error)
         else:
-            self.message = f"Demolished {tower.name} at ({tower.position.x}, {tower.position.y}). No refund."
+            self.message = (
+                f"Demolished {tower.name} at "
+                f"({tower.position.x}, {tower.position.y}). No refund."
+            )
         self.selected_tower_id = None
 
     def _advance_once(self, *, animate: bool = False) -> None:
@@ -152,44 +156,6 @@ class CriticalGridGUI:
             self.board.finish_animation()
             self.sidebar.set_running(False)
             self.message = self.game.result_message
-
-    def _text(self, value: str, x: int, y: int, *, color=TEXT, font=None) -> None:
-        surface = (font or self.font).render(value, True, color)
-        self.screen.blit(surface, (x, y))
-
-    def _draw_status(self) -> None:
-        report = self.game.latest_power_report
-        pygame.draw.rect(self.screen, PANEL, pygame.Rect(18, 16, 1044, 96), border_radius=8)
-        self._text("CRITICAL GRID", 34, 25, font=self.title_font)
-        self._text(
-            f"{self.game.current_wave_name}   Time {self.game.elapsed_seconds}s"
-            f"   {'RUNNING' if self.running else 'PAUSED'}",
-            339, 32, color=MUTED,
-        )
-        self._text(
-            f"Gold {self.game.gold}    Debt {self.game.debt}    Core HP {self.game.core_hp}"
-            f"    Power {report.total_supply}/{report.total_demand}"
-            f"    Efficiency {report.efficiency:.0%}",
-            34, 76, font=self.small_font,
-        )
-
-    def _draw_message(self) -> None:
-        pygame.draw.rect(self.screen, PANEL, pygame.Rect(18, 568, 1044, 76), border_radius=8)
-        self._text("EVENT", 34, 579, color=MUTED, font=self.small_font)
-        words = self.message.split()
-        lines: list[str] = []
-        current = ""
-        for word in words:
-            candidate = f"{current} {word}".strip()
-            if current and self.small_font.size(candidate)[0] > 1000:
-                lines.append(current)
-                current = word
-            else:
-                current = candidate
-        if current:
-            lines.append(current)
-        for index, line in enumerate(lines[:2]):
-            self._text(line, 34, 602 + index * 22, font=self.small_font)
 
     def run(self, max_frames: int | None = None) -> None:
         """Start the event loop. max_frames is useful for a headless smoke check."""
@@ -220,14 +186,14 @@ class CriticalGridGUI:
 
                 self.manager.update(dt)
                 self.screen.fill(BACKGROUND)
-                self._draw_status()
+                self.hud.draw_status(self.game, self.running)
                 self.board.draw(
                     self.selected_tower_id,
                     self.inspected_position,
                     show_hover=not self.game.is_finished,
                 )
                 self.sidebar.draw(self.game, self.selected_kind, self.inspected_position)
-                self._draw_message()
+                self.hud.draw_message(self.message)
                 self.manager.draw_ui(self.screen)
                 pygame.display.flip()
                 frames += 1
