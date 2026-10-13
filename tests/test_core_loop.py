@@ -175,6 +175,16 @@ class CoreLoopTest(unittest.TestCase):
         self.assertIsNotNone(game.wave_runner)
         self.assertEqual(game.current_wave_name, "Wave 2")
 
+    def test_step_does_not_advance_finished_game(self) -> None:
+        """A finished game should ignore future simulation steps."""
+        game = GameState(create_demo_map())
+        game.result_message = "Victory. All waves cleared."
+
+        game.step(1.0)
+
+        self.assertEqual(game.elapsed_seconds, 0)
+        self.assertEqual(game.enemies, [])
+
     def test_demo_wave_can_advance_without_crashing(self) -> None:
         """The default map and basic defense should run for multiple steps."""
         game = GameState(create_demo_map())
