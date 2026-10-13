@@ -39,6 +39,20 @@ class CoreLoopTest(unittest.TestCase):
         self.assertEqual(tower.efficiency, 0.0)
         self.assertEqual(game.latest_power_report.connected_count, 1)
 
+    def test_power_shortage_reduces_connected_efficiency(self) -> None:
+        """Connected demand above supply should lower shared efficiency."""
+        game = GameState(create_demo_map())
+
+        game.build("gun_tower", Position(10, 2))
+        game.build("slow_tower", Position(10, 3))
+        cannon = game.build("cannon_tower", Position(10, 4))
+
+        report = game.latest_power_report
+        self.assertEqual(report.total_supply, 10)
+        self.assertEqual(report.total_demand, 12)
+        self.assertAlmostEqual(report.efficiency, 10 / 12)
+        self.assertAlmostEqual(cannon.efficiency, 10 / 12)
+
     def test_core_overdraft_adds_gold_and_debt(self) -> None:
         """Core overdraft should add both gold and debt."""
         game = GameState(create_demo_map())
