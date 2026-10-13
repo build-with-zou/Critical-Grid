@@ -19,18 +19,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from grid_td.buildings import Building, Core, Tower
+from grid_td.buildings import Tower
 from grid_td.game_state import GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.board_view import BoardView
+from gui.sidebar import Sidebar
 from gui.styles import (
     BACKGROUND,
-    BUILD_KINDS,
     FPS,
     MUTED,
     PANEL,
-    PANEL_LEFT,
     TEXT,
     WINDOW_SIZE,
 )
@@ -51,59 +50,28 @@ class CriticalGridGUI:
 
         self.game = GameState(create_demo_map())
         self.board = BoardView(self.game, self.screen, self.font)
+        self.sidebar = Sidebar(self.screen, self.manager, self.small_font, self.font)
         self.running = False
         self.selected_kind: str | None = None
         self.selected_tower_id: int | None = None
         self.inspected_position: Position | None = None
         self.simulation_accumulator = 0.0
         self.message = "Click the map to inspect. Choose a building button before placing."
-        self.build_buttons: dict[UIButton, str] = {}
-        self._create_controls()
-        self._update_build_button_labels()
-
-    def _create_controls(self) -> None:
-        for index, (kind, label, _, _) in enumerate(BUILD_KINDS):
-            col, row = index % 2, index // 2
-            button = UIButton(
-                pygame.Rect(PANEL_LEFT + 16 + col * 164, 175 + row * 52, 151, 42),
-                label,
-                self.manager,
-            )
-            self.build_buttons[button] = kind
-
-        self.run_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 355, 151, 44), "Run", self.manager
-        )
-        self.step_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 355, 151, 44), "Step +1s", self.manager
-        )
-        self.cancel_build_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 410, 151, 42), "Cancel Build", self.manager,
-        )
-        self.demolish_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 410, 151, 42), "Demolish Tower", self.manager,
-        )
-
-    def _update_build_button_labels(self) -> None:
-        labels = {kind: label for kind, label, _, _ in BUILD_KINDS}
-        for button, kind in self.build_buttons.items():
-            marker = "> " if kind == self.selected_kind else "  "
-            button.set_text(marker + labels[kind])
 
     def _handle_button(self, button: UIButton) -> None:
-        if button in self.build_buttons:
+        if button in self.sidebar.build_buttons:
             if self.game.is_finished:
                 self.message = self.game.result_message
                 return
-            chosen_kind = self.build_buttons[button]
+            chosen_kind = self.sidebar.build_buttons[button]
             self.selected_kind = None if self.selected_kind == chosen_kind else chosen_kind
             self.selected_tower_id = None
-            self._update_build_button_labels()
+            self.sidebar.update_build_selection(self.selected_kind)
             if self.selected_kind is None:
                 self.message = "Build cancelled. Click the map to inspect."
             else:
                 self.message = f"Build mode: {self.selected_kind.replace('_', ' ')}. Click a map cell."
-        elif button == self.run_button:
+        elif button == self.sidebar.run_button:
             if self.game.is_finished:
                 self.message = self.game.result_message
                 return
@@ -111,18 +79,18 @@ class CriticalGridGUI:
             self.simulation_accumulator = 0.0
             if not self.running:
                 self.board.finish_animation()
-            self.run_button.set_text("Pause" if self.running else "Run")
+            self.sidebar.set_running(self.running)
             self.message = "Simulation running." if self.running else "Simulation paused."
-        elif button == self.step_button:
+        elif button == self.sidebar.step_button:
             self._advance_once(animate=True)
-        elif button == self.cancel_build_button:
+        elif button == self.sidebar.cancel_build_button:
             self._cancel_build()
-        elif button == self.demolish_button:
+        elif button == self.sidebar.demolish_button:
             self._demolish_selected_tower()
 
     def _cancel_build(self) -> None:
         self.selected_kind = None
-        self._update_build_button_labels()
+        self.sidebar.update_build_selection(None)
         self.message = "Build cancelled. Click the map to inspect."
 
     def _handle_board_click(self, mouse_pos: tuple[int, int]) -> None:
@@ -151,7 +119,7 @@ class CriticalGridGUI:
         else:
             self.message = f"Built {building.name} at ({position.x}, {position.y})."
             self.selected_kind = None
-            self._update_build_button_labels()
+            self.sidebar.update_build_selection(None)
 
     def _demolish_selected_tower(self) -> None:
         if self.game.is_finished:
@@ -182,7 +150,7 @@ class CriticalGridGUI:
         if self.game.is_finished:
             self.running = False
             self.board.finish_animation()
-            self.run_button.set_text("Run")
+            self.sidebar.set_running(False)
             self.message = self.game.result_message
 
     def _text(self, value: str, x: int, y: int, *, color=TEXT, font=None) -> None:
@@ -204,61 +172,6 @@ class CriticalGridGUI:
             f"    Efficiency {report.efficiency:.0%}",
             34, 76, font=self.small_font,
         )
-
-    def _inspection_lines(self) -> tuple[str, str, str]:
-        position = self.inspected_position
-        if position is None:
-            return (
-                "Click a tile to inspect its terrain.",
-                "Click a building to inspect its status.",
-                "Choose a button above to enter build mode.",
-            )
-
-        building: Building | None = self.game.building_at(position)
-        coordinate = f"({position.x}, {position.y})"
-        if building is not None:
-            current_hp = self.game.core_hp if isinstance(building, Core) else building.hp
-            grid_status = "Connected" if building.connected_to_grid else "Disconnected"
-            if isinstance(building, Tower):
-                detail = f"Range {building.range}  Damage {building.damage:g}  Cooldown {building.cooldown_seconds:g}s"
-            else:
-                detail = f"Supply {building.power_supply}  Demand {building.power_draw}  Cost {building.cost}"
-            return (
-                f"{coordinate}  {building.name}  HP {current_hp}/{building.max_hp}",
-                f"Grid {grid_status}  Efficiency {building.efficiency:.0%}",
-                detail,
-            )
-
-        grid_map = self.game.grid_map
-        if grid_map.is_route(position):
-            terrain, note = "Route", "Enemy path; construction prohibited."
-        elif grid_map.is_mine_site(position):
-            terrain, note = "Mine site", "Only mines can be built here."
-        elif grid_map.is_high_ground(position):
-            terrain, note = "High ground", "Defense towers gain +1 range."
-        else:
-            terrain, note = "Ground", "Standard building terrain."
-        buildable = "Yes" if grid_map.is_buildable(position) else "No"
-        return (
-            f"{coordinate}  Terrain: {terrain}",
-            f"Buildable: {buildable}",
-            note,
-        )
-
-    def _draw_panel(self) -> None:
-        pygame.draw.rect(self.screen, PANEL, pygame.Rect(PANEL_LEFT, 132, 347, 424), border_radius=7)
-        self._text("BUILD", PANEL_LEFT + 16, 143)
-        if self.selected_kind is None:
-            self._text("INSPECT MODE", PANEL_LEFT + 16, 462,
-                       color=(111, 214, 228), font=self.small_font)
-        else:
-            self._text(f"BUILD MODE: {self.selected_kind.replace('_', ' ').upper()}",
-                       PANEL_LEFT + 16, 462, color=(245, 225, 164), font=self.small_font)
-        for index, line in enumerate(self._inspection_lines()):
-            self._text(line, PANEL_LEFT + 16, 485 + index * 22,
-                       color=MUTED, font=self.small_font)
-        self._text("$ mine site    ^ high ground    colored dots: enemies", 35, 530,
-                   color=MUTED, font=self.small_font)
 
     def _draw_message(self) -> None:
         pygame.draw.rect(self.screen, PANEL, pygame.Rect(18, 568, 1044, 76), border_radius=8)
@@ -313,7 +226,7 @@ class CriticalGridGUI:
                     self.inspected_position,
                     show_hover=not self.game.is_finished,
                 )
-                self._draw_panel()
+                self.sidebar.draw(self.game, self.selected_kind, self.inspected_position)
                 self._draw_message()
                 self.manager.draw_ui(self.screen)
                 pygame.display.flip()
