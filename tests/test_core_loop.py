@@ -53,6 +53,14 @@ class CoreLoopTest(unittest.TestCase):
         self.assertAlmostEqual(report.efficiency, 10 / 12)
         self.assertAlmostEqual(cannon.efficiency, 10 / 12)
 
+    def test_high_ground_increases_tower_range(self) -> None:
+        """Building a tower on high ground should apply the range bonus."""
+        game = GameState(create_demo_map())
+
+        tower = game.build("gun_tower", Position(4, 2))
+
+        self.assertEqual(tower.range, 3)
+
     def test_core_overdraft_adds_gold_and_debt(self) -> None:
         """Core overdraft should add both gold and debt."""
         game = GameState(create_demo_map())
