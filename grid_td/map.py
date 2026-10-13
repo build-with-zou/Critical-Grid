@@ -1,15 +1,16 @@
 """Fixed grid map and static terrain rules.
 
 This module sits in the domain foundation layer. It stores map dimensions, the
-fixed enemy route, the core position, mine sites, and high-ground cells, then
-provides queries that do not involve runtime entities. `GameState` uses these
-rules for build validation, `Enemy` uses `route` to map path progress, and
-`TextRenderer` uses terrain queries to produce the character map.
+fixed enemy route, the core position, mine sites, high-ground cells, and
+blocked terrain, then provides queries that do not involve runtime entities.
+`GameState` uses these rules for build validation, `Enemy` uses `route` to map
+path progress, and `TextRenderer` uses terrain queries to produce the
+character map.
 
 `GridMap` is a frozen data object, so these methods do not change the layout
 during a run. Note that `is_buildable()` only checks bounds, route cells, and
-the core. Occupancy, mine-site type, gold, and dynamic pathing constraints are
-validated by `GameState.build()`.
+static blocked terrain. Occupancy, mine-site type, gold, and dynamic pathing
+constraints are validated by `GameState.build()`.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ class GridMap:
     core_position: Position  # Core cell; build rules forbid occupying it.
     mine_positions: frozenset[Position]  # Mine-only build cells.
     high_ground_positions: frozenset[Position]  # Cells that grant tower range.
+    illegal_ground_positions: frozenset[Position]  # Static blocked cells.
 
     def in_bounds(self, position: Position) -> bool:
         """Return whether a coordinate lies inside the map rectangle."""
@@ -56,8 +58,8 @@ class GridMap:
 
         Returns:
             Only indicates that the coordinate is in bounds, not on the route,
-            and not the core. Occupancy and building-type restrictions are
-            handled by `GameState.build()`.
+            not on blocked terrain, and not the core. Occupancy and
+            building-type restrictions are handled by `GameState.build()`.
         """
         if not self.in_bounds(position):
             return False
@@ -65,7 +67,13 @@ class GridMap:
             return False
         if position == self.core_position:
             return False
+        if self.is_illegal(position):
+            return False
         return True
+
+    def is_illegal(self, position: Position) -> bool:
+        """Return whether the position is illegal to build."""
+        return position in self.illegal_ground_positions
 
 
 def create_demo_map() -> GridMap:
@@ -108,6 +116,18 @@ def create_demo_map() -> GridMap:
             {
                 Position(4, 2),
                 Position(7, 2),
+            }
+        ),
+        illegal_ground_positions=frozenset(
+            {
+                Position(0, 0),
+                Position(1, 0),
+                Position(5, 0),
+                Position(6, 0),
+                Position(11, 2),
+                Position(11, 3),
+                Position(4, 6),
+                Position(5, 6),
             }
         ),
     )
