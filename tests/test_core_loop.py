@@ -29,6 +29,16 @@ class CoreLoopTest(unittest.TestCase):
         self.assertTrue(tower.connected_to_grid)
         self.assertGreater(tower.efficiency, 0)
 
+    def test_disconnected_building_has_zero_efficiency(self) -> None:
+        """A building outside the adjacent grid should render as unpowered."""
+        game = GameState(create_demo_map())
+
+        tower = game.build("gun_tower", Position(0, 1))
+
+        self.assertFalse(tower.connected_to_grid)
+        self.assertEqual(tower.efficiency, 0.0)
+        self.assertEqual(game.latest_power_report.connected_count, 1)
+
     def test_core_overdraft_adds_gold_and_debt(self) -> None:
         """Core overdraft should add both gold and debt."""
         game = GameState(create_demo_map())
