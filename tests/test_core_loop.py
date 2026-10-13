@@ -84,6 +84,22 @@ class CoreLoopTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             poor_game.buy_wave_intel()
 
+    def test_overload_tower_marks_repair_and_adds_debt(self) -> None:
+        """Tower overload should create the later repair/debt consequences."""
+        game = GameState(create_demo_map())
+        game.build("power_plant", Position(10, 2))
+        tower = game.build("gun_tower", Position(10, 3))
+
+        game.overload_tower(tower.id)
+
+        self.assertTrue(tower.is_overloaded)
+        self.assertTrue(tower.needs_repair)
+        self.assertEqual(game.debt, 10)
+
+        game.end_wave()
+
+        self.assertFalse(tower.needs_repair)
+
     def test_building_on_illegal_position(self) -> None:
         """Build placement rules should reject blocked or otherwise invalid cells."""
         game = GameState(create_demo_map())
