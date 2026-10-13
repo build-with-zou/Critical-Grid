@@ -141,6 +141,23 @@ class CoreLoopTest(unittest.TestCase):
 
         self.assertEqual(first_map_row, "##...##.....")
 
+    def test_waiting_for_next_wave_requires_spawn_complete_and_no_enemies(self) -> None:
+        """Wave settlement should wait for both spawning and enemy cleanup."""
+        game = GameState(create_demo_map())
+
+        self.assertFalse(game.waiting_for_next_wave)
+
+        game.step(8.0)
+
+        self.assertTrue(game.wave_runner.is_complete)
+        self.assertGreater(len(game.enemies), 0)
+        self.assertFalse(game.waiting_for_next_wave)
+
+        game.step(20.0)
+
+        self.assertEqual(game.enemies, [])
+        self.assertTrue(game.waiting_for_next_wave)
+
     def test_demo_wave_can_advance_without_crashing(self) -> None:
         """The default map and basic defense should run for multiple steps."""
         game = GameState(create_demo_map())
