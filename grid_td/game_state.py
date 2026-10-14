@@ -302,6 +302,17 @@ class GameState:
                 return building
         return None
 
+    def demolish_tower(self, building_id: int) -> Tower:
+        """Remove an existing defense tower and refresh grid connectivity.
+
+        The prototype does not refund construction cost. Mines, power
+        infrastructure, and the core cannot be removed through this operation.
+        """
+        tower = self.find_tower(building_id)
+        self.buildings = [building for building in self.buildings if building.id != building_id]
+        self.recalculate_power()
+        return tower
+
     def find_tower(self, building_id: int) -> Tower:
         """Find a tower by entity ID without matching non-tower buildings."""
         for building in self.buildings:

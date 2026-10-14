@@ -71,6 +71,23 @@ class CoreLoopTest(unittest.TestCase):
         self.assertEqual(game.gold, gold_before + 40)
         self.assertGreater(game.debt, 0)
 
+    def test_demolish_tower_updates_power_and_does_not_refund(self) -> None:
+        game = GameState(create_demo_map())
+        game.build("power_plant", Position(10, 2))
+        tower = game.build("gun_tower", Position(10, 3))
+        gold_before = game.gold
+
+        removed = game.demolish_tower(tower.id)
+
+        self.assertIs(removed, tower)
+        self.assertIsNone(game.building_at(Position(10, 3)))
+        self.assertEqual(game.latest_power_report.total_demand, 0)
+        self.assertEqual(game.gold, gold_before)
+        with self.assertRaises(ValueError):
+            game.demolish_tower(tower.id)
+        with self.assertRaises(ValueError):
+            game.demolish_tower(game.building_at(Position(10, 1)).id)
+            
     def test_buy_wave_intel_spends_gold_and_requires_gold(self) -> None:
         """Buying intel should expose the briefing and enforce its price."""
         game = GameState(create_demo_map())
