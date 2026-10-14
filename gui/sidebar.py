@@ -76,7 +76,7 @@ class Sidebar:
         for index, line in enumerate(self.inspection_lines(game, inspected_position)):
             self._text(line, PANEL_LEFT + 16, 485 + index * 22, MUTED)
         self._text(
-            "$ mine site    ^ high ground    dots: enemies",
+            "$ mine site    ^ high ground    dots: enemies    O: overload tower",
             35, 530, MUTED,
         )
 

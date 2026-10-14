@@ -116,7 +116,7 @@ class CriticalGridGUI:
                     elif not self._tower_reaches_route(building_at_position):
                         self.message += " Its range does not reach the enemy path."
                     else:
-                        self.message += " Highlighted path tiles are in range."
+                        self.message += " Highlighted path tiles are in range. O: overload."
             return
         if self.game.is_finished:
             self.message = self.game.result_message
@@ -163,6 +163,25 @@ class CriticalGridGUI:
             )
         self.selected_tower_id = None
 
+    def _overload_selected_tower(self) -> None:
+        if self.game.is_finished:
+            self.message = self.game.result_message
+            return
+        if self.selected_tower_id is None:
+            self.message = "Click an existing tower first, then press O to overload."
+            return
+        try:
+            tower = self.game.find_tower(self.selected_tower_id)
+            self.game.overload_tower(tower.id)
+        except ValueError as error:
+            self.selected_tower_id = None
+            self.message = str(error)
+        else:
+            self.message = (
+                f"{tower.name} overloaded for 8s. Debt +10; repair costs 5 gold "
+                "at wave end."
+            )
+
     def _advance_once(self, *, animate: bool = False) -> None:
         if self.game.is_finished:
             self.message = self.game.result_message
@@ -198,6 +217,8 @@ class CriticalGridGUI:
                         self._handle_board_click(event.pos)
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_DELETE:
                         self._demolish_selected_tower()
+                    elif event.type == pygame.KEYDOWN and event.key == pygame.K_o:
+                        self._overload_selected_tower()
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         self._cancel_build()
                     self.manager.process_events(event)
