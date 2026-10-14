@@ -9,7 +9,14 @@ from pygame_gui.elements import UIButton
 from grid_td.buildings import Building, Core, Tower
 from grid_td.game_state import GameState
 from grid_td.position import Position
-from gui.styles import BUILD_KINDS, MUTED, PANEL, PANEL_LEFT
+from gui.styles import (
+    BUILD_KINDS,
+    CHARGED_COLOR,
+    MUTED,
+    PANEL,
+    PANEL_LEFT,
+    UNCHARGED_COLOR,
+)
 
 
 class Sidebar:
@@ -73,11 +80,25 @@ class Sidebar:
         else:
             label = f"BUILD MODE: {selected_kind.replace('_', ' ').upper()}"
             self._text(label, PANEL_LEFT + 16, 462, (245, 225, 164))
+        inspected_building = (
+            game.building_at(inspected_position) if inspected_position is not None else None
+        )
         for index, line in enumerate(self.inspection_lines(game, inspected_position)):
-            self._text(line, PANEL_LEFT + 16, 485 + index * 22, MUTED)
+            color = MUTED
+            if index == 1 and inspected_building is not None:
+                color = (
+                    CHARGED_COLOR
+                    if inspected_building.connected_to_grid and inspected_building.efficiency > 0
+                    else UNCHARGED_COLOR
+                )
+            self._text(line, PANEL_LEFT + 16, 485 + index * 22, color)
+        self._text(
+            "Green ring: charged    Red ring: not charged",
+            35, 518, MUTED,
+        )
         self._text(
             "$ mine site    ^ high ground    dots: enemies    O: overload tower",
-            35, 530, MUTED,
+            35, 542, MUTED,
         )
 
     @staticmethod
@@ -95,7 +116,8 @@ class Sidebar:
         coordinate = f"({position.x}, {position.y})"
         if building is not None:
             current_hp = game.core_hp if isinstance(building, Core) else building.hp
-            grid_status = "Connected" if building.connected_to_grid else "Disconnected"
+            charged = building.connected_to_grid and building.efficiency > 0
+            power_status = "CHARGED" if charged else "NOT CHARGED"
             if isinstance(building, Tower):
                 if not building.connected_to_grid:
                     detail = "Cannot attack: connect this tower to the core."
@@ -113,7 +135,7 @@ class Sidebar:
                 )
             return (
                 f"{coordinate}  {building.name}  HP {current_hp}/{building.max_hp}",
-                f"Grid {grid_status}  Efficiency {building.efficiency:.0%}",
+                f"Power: {power_status}  Efficiency {building.efficiency:.0%}",
                 detail,
             )
 

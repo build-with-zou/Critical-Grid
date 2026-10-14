@@ -15,6 +15,7 @@ from gui.styles import (
     BOARD_LEFT,
     BOARD_TOP,
     CELL,
+    CHARGED_COLOR,
     ENEMY_COLOR,
     ENEMY_COLORS,
     GRID_LINE,
@@ -26,6 +27,7 @@ from gui.styles import (
     ROUTE,
     SYMBOL_COLORS,
     TEXT,
+    UNCHARGED_COLOR,
 )
 
 ATTACK_EFFECT_SECONDS = 0.1
@@ -182,7 +184,7 @@ class BoardView:
             range_color = (
                 (111, 214, 228)
                 if selected_tower.connected_to_grid and selected_tower.efficiency > 0
-                else ENEMY_COLOR
+                else UNCHARGED_COLOR
             )
             for position in grid_map.route:
                 if selected_tower.position.manhattan_distance(position) <= selected_tower.range:
@@ -221,10 +223,11 @@ class BoardView:
             symbol = getattr(building, "SYMBOL", "?")
             color = SYMBOL_COLORS.get(symbol, (156, 174, 188))
             pygame.draw.circle(self.screen, color, center, 19)
+            charged = building.connected_to_grid and building.efficiency > 0
+            status_color = CHARGED_COLOR if charged else UNCHARGED_COLOR
+            pygame.draw.circle(self.screen, status_color, center, 23, 4)
             if building.id == selected_tower_id:
-                pygame.draw.circle(self.screen, (250, 226, 139), center, 24, 3)
-            if not building.connected_to_grid:
-                pygame.draw.circle(self.screen, ENEMY_COLOR, center, 22, 3)
+                pygame.draw.circle(self.screen, (250, 226, 139), center, 29, 2)
             self._center_symbol(
                 symbol,
                 pygame.Rect(center[0] - 22, center[1] - 22, 44, 44),
@@ -247,7 +250,7 @@ class BoardView:
                 CELL, CELL,
             )
             pygame.draw.rect(
-                self.screen, (111, 214, 228), rect.inflate(-5, -5), 2,
+                self.screen, (111, 214, 228), rect.inflate(-1, -1), 2,
                 border_radius=3,
             )
 
