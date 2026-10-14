@@ -6,7 +6,7 @@ from collections import defaultdict
 
 import pygame
 
-from grid_td.buildings import Building
+from grid_td.buildings import Building, Tower
 from grid_td.enemies import Enemy
 from grid_td.game_state import GameState
 from grid_td.position import Position
@@ -28,6 +28,8 @@ from gui.styles import (
     TEXT,
 )
 
+ATTACK_EFFECT_SECONDS = 0.1
+
 
 class BoardView:
     """Draw the map and interpolate enemy positions without changing the game."""
@@ -38,6 +40,7 @@ class BoardView:
         self.font = font
         self.previous_progress: dict[int, float] = {}
         self.animation_elapsed = 1.0
+        self.attack_beams: list[tuple[tuple[int, int], tuple[int, int], float]] = []
 
     def position_at(self, mouse_pos: tuple[int, int]) -> Position | None:
         x = (mouse_pos[0] - BOARD_LEFT) // CELL
@@ -57,8 +60,67 @@ class BoardView:
         }
         self.animation_elapsed = 0.0 if animate else 1.0
 
+    def capture_combat(self) -> tuple[dict[int, float], list[tuple[Enemy, float, float]]]:
+        """Snapshot visible combat state before GameState runs an attack step."""
+        cooldowns = {
+            building.id: building.cooldown_remaining
+            for building in self.game.buildings
+            if isinstance(building, Tower)
+        }
+        enemies = [
+            (enemy, enemy.hp, enemy.path_progress)
+            for enemy in self.game.enemies
+        ]
+        return cooldowns, enemies
+
+    def show_combat_results(
+        self,
+        before: tuple[dict[int, float], list[tuple[Enemy, float, float]]],
+        seconds: float,
+    ) -> None:
+        """Show attacks already resolved by GameState without changing damage."""
+        cooldowns, enemies = before
+        hits: list[list[float]] = []  # Attack-time route progress and unassigned damage.
+        known_enemies = {id(enemy) for enemy, _, _ in enemies}
+        for enemy, previous_hp, progress in enemies:
+            damage = previous_hp - enemy.hp
+            if damage > 0:
+                hits.append([progress, damage])
+
+        for enemy in self.game.enemies:
+            if id(enemy) not in known_enemies and enemy.hp < enemy.max_hp:
+                hits.append([0.0, enemy.max_hp - enemy.hp])
+
+        route = self.game.grid_map.route
+        for building in self.game.buildings:
+            if not isinstance(building, Tower):
+                continue
+            expected = max(0.0, cooldowns.get(building.id, 0.0) - seconds)
+            if building.cooldown_remaining > expected + 1e-6:
+                candidates = [
+                    hit for hit in hits
+                    if hit[1] > 1e-6
+                    and building.position.manhattan_distance(
+                        route[min(int(hit[0]), len(route) - 1)]
+                    ) <= building.range
+                ]
+                if candidates:
+                    target = max(candidates, key=lambda hit: hit[0])
+                    point = self._route_screen_point(target[0])
+                    self.attack_beams.append((
+                        self._cell_center(building.position),
+                        (round(point[0]), round(point[1])),
+                        ATTACK_EFFECT_SECONDS,
+                    ))
+                    target[1] = max(0.0, target[1] - building.current_damage())
+
     def update(self, seconds: float) -> None:
         self.animation_elapsed = min(1.0, self.animation_elapsed + seconds)
+        self.attack_beams = [
+            (start, end, remaining - seconds)
+            for start, end, remaining in self.attack_beams
+            if remaining > seconds
+        ]
 
     def finish_animation(self) -> None:
         self.animation_elapsed = 1.0
@@ -109,6 +171,31 @@ class BoardView:
                 elif position not in buildings and grid_map.is_high_ground(position):
                     self._center_symbol("^", rect, (160, 198, 226))
 
+        selected_tower = next(
+            (
+                building for building in self.game.buildings
+                if building.id == selected_tower_id and isinstance(building, Tower)
+            ),
+            None,
+        )
+        if selected_tower is not None:
+            range_color = (
+                (111, 214, 228)
+                if selected_tower.connected_to_grid and selected_tower.efficiency > 0
+                else ENEMY_COLOR
+            )
+            for position in grid_map.route:
+                if selected_tower.position.manhattan_distance(position) <= selected_tower.range:
+                    rect = pygame.Rect(
+                        BOARD_LEFT + position.x * CELL,
+                        BOARD_TOP + position.y * CELL,
+                        CELL, CELL,
+                    )
+                    pygame.draw.rect(
+                        self.screen, range_color, rect.inflate(-7, -7), 3,
+                        border_radius=4,
+                    )
+
         for position, building in buildings.items():
             if not building.connected_to_grid:
                 continue
@@ -124,6 +211,10 @@ class BoardView:
                     )
 
         self._draw_enemies(buildings)
+
+        for start, end, _ in self.attack_beams:
+            pygame.draw.line(self.screen, (245, 172, 69), start, end, 6)
+            pygame.draw.line(self.screen, (255, 246, 191), start, end, 2)
 
         for position, building in buildings.items():
             center = self._cell_center(position)
@@ -228,6 +319,11 @@ class BoardView:
         color = ENEMY_COLORS.get(enemy.name, ENEMY_COLOR)
         pygame.draw.circle(self.screen, color, center, radius)
         pygame.draw.circle(self.screen, BACKGROUND, center, radius, 1)
+        bar = pygame.Rect(center[0] - 11, center[1] - radius - 7, 22, 4)
+        pygame.draw.rect(self.screen, BACKGROUND, bar)
+        fill_width = round(bar.width * max(0.0, enemy.hp / enemy.max_hp))
+        if fill_width > 0:
+            pygame.draw.rect(self.screen, (113, 218, 142), (bar.x, bar.y, fill_width, bar.height))
 
     def _center_symbol(
         self, symbol: str, rect: pygame.Rect, color: tuple[int, int, int]

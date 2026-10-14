@@ -1,8 +1,8 @@
 """Pygame GUI for the current Critical Grid prototype.
 
 Run from the project root with ``python gui/gui.py``. Requires pygame-ce and
-pygame_gui. The board is a read-only view of GameState except for calls to its
-public build/step/wave/demolish methods.
+pygame_gui. GameState owns combat; the GUI calls its public methods and shows
+the results.
 """
 
 from __future__ import annotations
@@ -108,6 +108,15 @@ class CriticalGridGUI:
                     f"{building_at_position.name} at "
                     f"({position.x}, {position.y}) selected."
                 )
+                if self.selected_tower_id is not None:
+                    if not building_at_position.connected_to_grid:
+                        self.message += " Disconnected towers cannot attack."
+                    elif building_at_position.efficiency <= 0:
+                        self.message += " This tower needs power to attack."
+                    elif not self._tower_reaches_route(building_at_position):
+                        self.message += " Its range does not reach the enemy path."
+                    else:
+                        self.message += " Highlighted path tiles are in range."
             return
         if self.game.is_finished:
             self.message = self.game.result_message
@@ -119,8 +128,22 @@ class CriticalGridGUI:
             self.message = f"Build failed: {error}"
         else:
             self.message = f"Built {building.name} at ({position.x}, {position.y})."
+            if isinstance(building, Tower):
+                self.selected_tower_id = building.id
+                if not building.connected_to_grid:
+                    self.message += " Connect it to the core before it can attack."
+                elif not self._tower_reaches_route(building):
+                    self.message += " Its range does not reach the enemy path."
+                else:
+                    self.message += " Highlighted path tiles are in range."
             self.selected_kind = None
             self.sidebar.update_build_selection(None)
+
+    def _tower_reaches_route(self, tower: Tower) -> bool:
+        return any(
+            tower.position.manhattan_distance(position) <= tower.range
+            for position in self.game.grid_map.route
+        )
 
     def _demolish_selected_tower(self) -> None:
         if self.game.is_finished:
@@ -145,8 +168,10 @@ class CriticalGridGUI:
             self.message = self.game.result_message
             return
         before = self.board.capture_progress()
+        combat_before = self.board.capture_combat()
         self.game.step(1.0)
         self.board.complete_step(before, animate=animate)
+        self.board.show_combat_results(combat_before, 1.0)
         if self.game.waiting_for_next_wave:
             self.message = self.game.end_wave()
             if not self.game.is_finished:

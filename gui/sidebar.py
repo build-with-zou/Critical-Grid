@@ -76,7 +76,7 @@ class Sidebar:
         for index, line in enumerate(self.inspection_lines(game, inspected_position)):
             self._text(line, PANEL_LEFT + 16, 485 + index * 22, MUTED)
         self._text(
-            "$ mine site    ^ high ground    colored dots: enemies",
+            "$ mine site    ^ high ground    dots: enemies",
             35, 530, MUTED,
         )
 
@@ -97,10 +97,15 @@ class Sidebar:
             current_hp = game.core_hp if isinstance(building, Core) else building.hp
             grid_status = "Connected" if building.connected_to_grid else "Disconnected"
             if isinstance(building, Tower):
-                detail = (
-                    f"Range {building.range}  Damage {building.damage:g}  "
-                    f"Cooldown {building.cooldown_seconds:g}s"
-                )
+                if not building.connected_to_grid:
+                    detail = "Cannot attack: connect this tower to the core."
+                elif building.efficiency <= 0:
+                    detail = "Cannot attack: this tower needs power."
+                else:
+                    detail = (
+                        f"Range {building.range}  Damage {building.current_damage():g}  "
+                        f"Ready in {building.cooldown_remaining:.1f}s"
+                    )
             else:
                 detail = (
                     f"Supply {building.power_supply}  Demand {building.power_draw}  "
