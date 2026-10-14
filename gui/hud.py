@@ -24,6 +24,7 @@ class HUD:
         self.title_font = title_font
 
     def draw_status(self, game: GameState, running: bool) -> None:
+        """显示资源、波次和最近一次电网结算结果。"""
         report = game.latest_power_report
         pygame.draw.rect(
             self.screen, PANEL, pygame.Rect(18, 16, 1044, 96), border_radius=8
@@ -42,6 +43,7 @@ class HUD:
         )
 
     def draw_message(self, message: str) -> None:
+        """按实际字体宽度折行，事件栏最多显示两行。"""
         pygame.draw.rect(
             self.screen, PANEL, pygame.Rect(18, 568, 1044, 76), border_radius=8
         )
@@ -51,6 +53,7 @@ class HUD:
         current = ""
         for word in words:
             candidate = f"{current} {word}".strip()
+            # 使用字体测量而非字符数，避免不同宽度的文字越过面板右边界。
             if current and self.small_font.size(candidate)[0] > 1000:
                 lines.append(current)
                 current = word

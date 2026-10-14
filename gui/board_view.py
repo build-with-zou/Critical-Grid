@@ -40,11 +40,14 @@ class BoardView:
         self.game = game
         self.screen = screen
         self.font = font
+        # 逻辑位置每秒更新一次；这里保存上一帧可见进度以补间绘制。
         self.previous_progress: dict[int, float] = {}
         self.animation_elapsed = 1.0
+        # 光束只记录起点、终点和剩余显示时间，不参与战斗结算。
         self.attack_beams: list[tuple[tuple[int, int], tuple[int, int], float]] = []
 
     def position_at(self, mouse_pos: tuple[int, int]) -> Position | None:
+        """将窗口像素坐标转换为棋盘坐标，棋盘外返回 None。"""
         x = (mouse_pos[0] - BOARD_LEFT) // CELL
         y = (mouse_pos[1] - BOARD_TOP) // CELL
         position = Position(x, y)
@@ -57,6 +60,7 @@ class BoardView:
         return {id(enemy): self.display_progress(enemy) for enemy in self.game.enemies}
 
     def complete_step(self, before: dict[int, float], *, animate: bool) -> None:
+        """记录逻辑步进前的显示位置，供存活敌人在下一秒内平滑移动。"""
         self.previous_progress = {
             id(enemy): before.get(id(enemy), 0.0) for enemy in self.game.enemies
         }
@@ -82,6 +86,7 @@ class BoardView:
     ) -> None:
         """Show attacks already resolved by GameState without changing damage."""
         cooldowns, enemies = before
+        # 死亡敌人已从 GameState 列表移除，但快照仍保留其对象和受击后生命值。
         hits: list[list[float]] = []  # Attack-time route progress and unassigned damage.
         known_enemies = {id(enemy) for enemy, _, _ in enemies}
         for enemy, previous_hp, progress in enemies:
@@ -97,6 +102,7 @@ class BoardView:
         for building in self.game.buildings:
             if not isinstance(building, Tower):
                 continue
+            # 冷却值高于自然流逝后的预期值，说明此步重置过冷却，即炮塔开火。
             expected = max(0.0, cooldowns.get(building.id, 0.0) - seconds)
             if building.cooldown_remaining > expected + 1e-6:
                 candidates = [
@@ -107,6 +113,7 @@ class BoardView:
                     ) <= building.range
                 ]
                 if candidates:
+                    # 战斗规则优先攻击路径进度最高的目标；已分配伤害从候选量中扣除。
                     target = max(candidates, key=lambda hit: hit[0])
                     point = self._route_screen_point(target[0])
                     self.attack_beams.append((
@@ -117,6 +124,7 @@ class BoardView:
                     target[1] = max(0.0, target[1] - building.current_damage())
 
     def update(self, seconds: float) -> None:
+        """推进纯视觉动画，并移除已过期的攻击光束。"""
         self.animation_elapsed = min(1.0, self.animation_elapsed + seconds)
         self.attack_beams = [
             (start, end, remaining - seconds)
@@ -128,6 +136,7 @@ class BoardView:
         self.animation_elapsed = 1.0
 
     def display_progress(self, enemy: Enemy) -> float:
+        """在逻辑步进前后的路径进度之间做线性插值。"""
         current = enemy.path_progress
         start = self.previous_progress.get(id(enemy), current)
         fraction = min(self.animation_elapsed, 1.0)
@@ -140,6 +149,7 @@ class BoardView:
         *,
         show_hover: bool,
     ) -> None:
+        """按地形、射程、电线、敌人、建筑和选中框的层次绘制棋盘。"""
         grid_map = self.game.grid_map
         board_width = grid_map.width * CELL
         board_height = grid_map.height * CELL
@@ -173,6 +183,7 @@ class BoardView:
                 elif position not in buildings and grid_map.is_high_ground(position):
                     self._center_symbol("^", rect, (160, 198, 226))
 
+        # 只高亮被选中炮塔能够覆盖的路线格，而非整个方形射程。
         selected_tower = next(
             (
                 building for building in self.game.buildings
@@ -198,6 +209,7 @@ class BoardView:
                         border_radius=4,
                     )
 
+        # 只检查右、下邻居，每条相邻建筑间的电线恰好画一次。
         for position, building in buildings.items():
             if not building.connected_to_grid:
                 continue
@@ -262,6 +274,7 @@ class BoardView:
         )
 
     def _route_screen_point(self, progress: float) -> tuple[float, float]:
+        """把连续的路径进度映射到相邻两个路线格中心之间。"""
         route = self.game.grid_map.route
         progress = max(0.0, min(progress, float(len(route) - 1)))
         index = int(progress)
@@ -276,6 +289,7 @@ class BoardView:
         )
 
     def _draw_enemies(self, buildings: dict[Position, Building]) -> None:
+        """按所在路线格分组，让同格敌人错位显示并汇总拥挤数量。"""
         route = self.game.grid_map.route
         groups: dict[int, list[tuple[Enemy, float]]] = defaultdict(list)
         for enemy in self.game.enemies:
@@ -292,6 +306,7 @@ class BoardView:
             next_tile = route[min(tile_index + 1, len(route) - 1)]
             vertical = next_tile.x == tile.x and next_tile.y != tile.y
             if count <= 3:
+                # 少量敌人沿路线垂直方向错开，避免标记完全重叠。
                 offsets = {1: (0,), 2: (-11, 11), 3: (-15, 0, 15)}[count]
                 for (enemy, progress), offset in zip(members, offsets):
                     x, y = self._route_screen_point(progress)
@@ -301,6 +316,7 @@ class BoardView:
                     )
                     self._enemy_marker(enemy, center, 8)
             else:
+                # 同格最多画九个小标记；更多敌人用数字提示总数。
                 visible = members[:9]
                 rows = (len(visible) + 2) // 3
                 for index, (enemy, progress) in enumerate(visible):
