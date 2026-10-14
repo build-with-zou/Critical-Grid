@@ -4,7 +4,8 @@
 buildings, enemies, core health, wave progress, and result state. It exposes
 operations for building, intel, overdraft, overload, wave settlement, and each
 time step; `PowerGrid`, `WaveRunner`, `Building`, and `Enemy` provide the
-local rules it calls.
+local rules it calls. Read-only presentation code should use `snapshot()`
+instead of reading mutable attributes directly.
 
 Key state-flow boundaries:
 
@@ -26,8 +27,12 @@ from dataclasses import dataclass, field
 
 from grid_td.buildings import (
     Building,
+    CannonTower,
     Core,
+    GunTower,
     Mine,
+    PowerNode,
+    PowerPlant,
     SlowTower,
     Tower,
     create_building,
@@ -37,6 +42,144 @@ from grid_td.map import GridMap
 from grid_td.position import Position
 from grid_td.power_grid import PowerGrid, PowerReport
 from grid_td.waves import WaveRunner, create_demo_waves
+
+
+@dataclass(frozen=True)
+class PowerSnapshot:
+    """GUI-safe copy of the latest power-grid summary."""
+
+    connected_count: int  # Number of buildings reachable from the core grid.
+    total_supply: int  # Connected power supply.
+    total_demand: int  # Connected power demand.
+    efficiency: float  # Shared connected-building efficiency multiplier.
+
+
+@dataclass(frozen=True)
+class BuildingSnapshot:
+    """Read-only display contract for one building.
+
+    The snapshot intentionally stores primitive values rather than the mutable
+    `Building` object, so presentation code cannot accidentally change core
+    state while rendering or inspecting a selected cell.
+    """
+
+    id: int  # Stable runtime ID used by command APIs such as overload_tower().
+    kind: str  # Stable building key for GUI routing and icons.
+    name: str  # Player-facing name.
+    symbol: str  # Compact text/debug symbol.
+    position: Position  # Occupied grid cell.
+    hp: int  # Current prototype health.
+    max_hp: int  # Maximum prototype health.
+    cost: int  # Build cost for this building type.
+    power_supply: int  # Power provided when connected.
+    power_draw: int  # Power consumed when connected.
+    connected_to_grid: bool  # Whether the latest power pass reached it.
+    efficiency: float  # Latest work multiplier.
+    needs_repair: bool  # Whether wave settlement should charge repair cost.
+    range: int | None = None  # Tower range; `None` for non-towers.
+    damage: float | None = None  # Tower base damage; `None` for non-towers.
+    cooldown_remaining: float | None = None  # Tower cooldown; `None` for non-towers.
+    is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
+
+
+@dataclass(frozen=True)
+class EnemySnapshot:
+    """Read-only display contract for one active enemy."""
+
+    name: str  # Enemy type name.
+    position: Position  # Current discrete route cell.
+    hp: float  # Current health.
+    max_hp: float  # Maximum health.
+    speed: float  # Base movement speed before slow effects.
+    damage_to_core: int  # Damage applied if this enemy reaches the core.
+    reward: int  # Gold paid when defeated.
+    path_progress: float  # Continuous progress along the route.
+    is_slowed: bool  # Whether a slow effect is currently active.
+
+
+@dataclass(frozen=True)
+class CellSnapshot:
+    """Read-only display contract for one map cell.
+
+    `terrain` describes the static map layer, while `building` and `enemies`
+    describe dynamic occupants. `is_buildable` is a generic placement hint:
+    it includes static map rules and occupancy, but building-kind-specific
+    rules such as mine-only cells and gold cost still belong to `build()`.
+    """
+
+    position: Position
+    terrain: str
+    is_buildable: bool
+    building: BuildingSnapshot | None
+    enemies: tuple[EnemySnapshot, ...]
+
+    @property
+    def has_enemy(self) -> bool:
+        """Return whether at least one active enemy is visible on this cell."""
+        return bool(self.enemies)
+
+    @property
+    def enemy_count(self) -> int:
+        """Return how many active enemies occupy this rendered route cell."""
+        return len(self.enemies)
+
+    @property
+    def display_symbol(self) -> str:
+        """Return the compact text symbol for this cell's visible layer.
+
+        This keeps the draw-priority contract in the snapshot layer, so text
+        and GUI renderers can consume the same cell data without duplicating
+        the building/enemy/terrain ordering rules.
+        """
+        if self.building is not None:
+            return self.building.symbol
+        if self.enemies:
+            return "e"
+        return {
+            "route": "=",
+            "core": "C",
+            "mine_site": "m",
+            "high_ground": "^",
+            "illegal": "#",
+            "empty": ".",
+        }[self.terrain]
+
+
+@dataclass(frozen=True)
+class GameStatus:
+    """Read-only status bar contract for GUI and text presentations."""
+
+    gold: int
+    debt: int
+    core_hp: int
+    elapsed_seconds: int
+    wave_index: int  # Zero-based index into the configured wave tuple.
+    current_wave_name: str
+    waiting_for_next_wave: bool
+    is_finished: bool
+    result_message: str
+    power: PowerSnapshot
+
+
+@dataclass(frozen=True)
+class GameSnapshot:
+    """Complete read-only presentation snapshot for one render frame."""
+
+    width: int
+    height: int
+    status: GameStatus
+    board: tuple[tuple[CellSnapshot, ...], ...]
+
+
+BUILDING_KIND_BY_TYPE: tuple[tuple[type[Building], str], ...] = (
+    (Core, "core"),
+    (Mine, "mine"),
+    (PowerPlant, "power_plant"),
+    (PowerNode, "power_node"),
+    (GunTower, "gun_tower"),
+    (CannonTower, "cannon_tower"),
+    (SlowTower, "slow_tower"),
+)
 
 
 @dataclass
@@ -93,6 +236,153 @@ class GameState:
         if self.wave_index >= len(self.waves):
             return "No more waves"
         return self.waves[self.wave_index].name
+
+    def snapshot(self) -> GameSnapshot:
+        """Return the single read-only data source for presentation layers.
+
+        GUI and text code should call this method when they need to inspect
+        state. Command methods such as `build()`, `step()`, and `end_wave()`
+        remain the only supported way for external code to change gameplay.
+        """
+        return GameSnapshot(
+            width=self.grid_map.width,
+            height=self.grid_map.height,
+            status=self.status_snapshot(),
+            board=self.board_snapshot(),
+        )
+
+    def status_snapshot(self) -> GameStatus:
+        """Return the current top-level game status without mutable entities."""
+        report = self.latest_power_report
+        return GameStatus(
+            gold=self.gold,
+            debt=self.debt,
+            core_hp=self.core_hp,
+            elapsed_seconds=self.elapsed_seconds,
+            wave_index=self.wave_index,
+            current_wave_name=self.current_wave_name,
+            waiting_for_next_wave=self.waiting_for_next_wave,
+            is_finished=self.is_finished,
+            result_message=self.result_message,
+            power=PowerSnapshot(
+                connected_count=report.connected_count,
+                total_supply=report.total_supply,
+                total_demand=report.total_demand,
+                efficiency=report.efficiency,
+            ),
+        )
+
+    def board_snapshot(self) -> tuple[tuple[CellSnapshot, ...], ...]:
+        """Return a row-major immutable snapshot of the whole board."""
+        enemies_by_position = self._enemy_snapshots_by_position()
+        return tuple(
+            tuple(
+                self._cell_snapshot(Position(x, y), enemies_by_position)
+                for x in range(self.grid_map.width)
+            )
+            for y in range(self.grid_map.height)
+        )
+
+    def cell_snapshot(self, position: Position) -> CellSnapshot:
+        """Return a read-only snapshot for one in-bounds map cell.
+
+        Raises:
+            ValueError: The requested position is outside the map.
+        """
+        if not self.grid_map.in_bounds(position):
+            raise ValueError(f"Position is out of bounds: {position}")
+        return self._cell_snapshot(position, self._enemy_snapshots_by_position())
+
+    def _cell_snapshot(
+        self,
+        position: Position,
+        enemies_by_position: dict[Position, tuple[EnemySnapshot, ...]],
+    ) -> CellSnapshot:
+        """Build one cell snapshot from precomputed occupant lookups."""
+        building = self.building_at(position)
+        return CellSnapshot(
+            position=position,
+            terrain=self._terrain_at(position),
+            is_buildable=self.grid_map.is_buildable(position) and building is None,
+            building=self._building_snapshot(building) if building is not None else None,
+            enemies=enemies_by_position.get(position, ()),
+        )
+
+    def _terrain_at(self, position: Position) -> str:
+        """Return the static terrain label for a map position.
+
+        The order mirrors the existing render priority for static layers.
+        Dynamic occupants are intentionally excluded and appear separately in
+        `CellSnapshot.building` and `CellSnapshot.enemies`.
+        """
+        if position == self.grid_map.core_position:
+            return "core"
+        if self.grid_map.is_route(position):
+            return "route"
+        if self.grid_map.is_mine_site(position):
+            return "mine_site"
+        if self.grid_map.is_high_ground(position):
+            return "high_ground"
+        if self.grid_map.is_illegal(position):
+            return "illegal"
+        return "empty"
+
+    def _building_snapshot(self, building: Building) -> BuildingSnapshot:
+        """Copy mutable building state into a presentation-safe value object."""
+        tower = building if isinstance(building, Tower) else None
+        return BuildingSnapshot(
+            id=building.id,
+            kind=self._building_kind(building),
+            name=building.name,
+            symbol=getattr(type(building), "SYMBOL", "?"),
+            position=building.position,
+            hp=building.hp,
+            max_hp=building.max_hp,
+            cost=building.cost,
+            power_supply=building.power_supply,
+            power_draw=building.power_draw,
+            connected_to_grid=building.connected_to_grid,
+            efficiency=building.efficiency,
+            needs_repair=building.needs_repair,
+            range=tower.range if tower is not None else None,
+            damage=tower.damage if tower is not None else None,
+            cooldown_remaining=tower.cooldown_remaining if tower is not None else None,
+            is_overloaded=tower.is_overloaded if tower is not None else False,
+        )
+
+    def _building_kind(self, building: Building) -> str:
+        """Return the stable command/API key for a building instance."""
+        for building_type, kind in BUILDING_KIND_BY_TYPE:
+            if isinstance(building, building_type):
+                return kind
+        return type(building).__name__
+
+    def _enemy_snapshots_by_position(self) -> dict[Position, tuple[EnemySnapshot, ...]]:
+        """Group active enemies by their rendered route cell."""
+        grouped: dict[Position, list[EnemySnapshot]] = {}
+        for enemy in self.enemies:
+            if not enemy.is_alive:
+                continue
+
+            position = enemy.position_on_route(self.grid_map.route)
+            grouped.setdefault(position, []).append(
+                EnemySnapshot(
+                    name=enemy.name,
+                    position=position,
+                    hp=enemy.hp,
+                    max_hp=enemy.max_hp,
+                    speed=enemy.speed,
+                    damage_to_core=enemy.damage_to_core,
+                    reward=enemy.reward,
+                    path_progress=enemy.path_progress,
+                    is_slowed=enemy.is_slowed,
+                )
+            )
+
+        return {
+            position: tuple(enemies)
+            for position, enemies in grouped.items()
+        }
 
     def build(self, kind: str, position: Position) -> Building:
         """Build at a position and update gold and power-grid state.

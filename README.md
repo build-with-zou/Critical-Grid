@@ -16,7 +16,8 @@ main.py
      -> Building / Enemy         mutable domain entities
      -> PowerGrid                 connection and efficiency calculation
      -> WaveRunner                enemy spawn schedule
-  -> TextRenderer                 read-only text projection of GameState
+     -> snapshot()                read-only presentation contract
+  -> TextRenderer                 text projection of the snapshot contract
 ```
 
 `GameState.step(seconds)` is the simulation boundary. Each step spawns due
@@ -24,6 +25,11 @@ enemies, recalculates power, lets connected towers attack, then advances
 enemies toward the core. Wave settlement is separate: `end_wave()` applies
 mine income, debt interest, and repair costs, while `start_next_wave()` creates
 the next spawn runner.
+
+Presentation layers should read through `GameState.snapshot()` rather than
+accessing mutable state lists and counters directly. The snapshot contains a
+status object plus a row-major board of cell snapshots, so both text and GUI
+frontends can render the same source of truth.
 
 The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid connects buildings through directly adjacent
@@ -36,12 +42,14 @@ Recommended reading order:
 
 1. `main.py` for the runnable scenario.
 2. `grid_td/game_state.py` for orchestration and state transitions.
-3. `grid_td/buildings.py`, `grid_td/enemies.py`, and `grid_td/waves.py` for
+3. `GameState.snapshot()` and its snapshot dataclasses for the GUI/text read
+   contract.
+4. `grid_td/buildings.py`, `grid_td/enemies.py`, and `grid_td/waves.py` for
    domain behavior.
-4. `grid_td/power_grid.py` for connectivity and efficiency side effects.
-5. `grid_td/map.py`, `grid_td/position.py`, and `grid_td/renderer.py` for
+5. `grid_td/power_grid.py` for connectivity and efficiency side effects.
+6. `grid_td/map.py`, `grid_td/position.py`, and `grid_td/renderer.py` for
    supporting rules and output.
-6. `tests/test_core_loop.py` for the currently protected behavior.
+7. `tests/test_core_loop.py` for the currently protected behavior.
 
 ## Project Structure
 
