@@ -7,9 +7,10 @@ belong to the domain modules inside the `grid_td` package.
 
 The public entry point is `main()`. `build_demo_defense()` only prepares a
 fixed scenario for the demo. Simulation data flows through `GameState.step()`,
-then the text renderer reads state for output. When changing the demo layout,
-also check starting gold, mine-site restrictions, and power-grid connectivity;
-otherwise the demo may raise `ValueError` during startup.
+then the text renderer reads `GameState.snapshot()` for output. When changing
+the demo layout, also check starting gold, mine-site restrictions, and
+power-grid connectivity; otherwise the demo may raise `ValueError` during
+startup.
 """
 
 from grid_td.game_state import GameState
@@ -54,25 +55,26 @@ def main() -> None:
     print("Minimal Grid Debt Tower Defense Prototype")
     print(renderer.render(game))
 
-    while not game.is_finished:
+    while not game.snapshot().status.is_finished:
         # The simulation layer uses float seconds for movement and cooldowns.
         game.step(1.0)
+        status = game.snapshot().status
 
-        if game.elapsed_seconds % 5 == 0:
+        if status.elapsed_seconds % 5 == 0:
             print(renderer.render(game))
 
-        if game.waiting_for_next_wave:
+        if status.waiting_for_next_wave:
             # WaveRunner only tracks spawning; GameState also waits for enemies to clear.
             print(game.end_wave())
-            if not game.is_finished:
+            if not game.snapshot().status.is_finished:
                 game.start_next_wave()
 
         # This is a demo-script guard, not part of the game rules.
-        if game.elapsed_seconds > 240:
+        if status.elapsed_seconds > 240:
             raise RuntimeError("Demo ran too long; check wave completion rules.")
 
     print(renderer.render(game))
-    print(game.result_message)
+    print(game.snapshot().status.result_message)
 
 
 if __name__ == "__main__":

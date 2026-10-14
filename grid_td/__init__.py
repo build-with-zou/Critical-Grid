@@ -8,9 +8,10 @@ There are currently no package-level re-exports; callers should import public
 types from their specific submodules.
 
 The typical call graph has `GameState` composing `GridMap`, `Building`,
-`Enemy`, `PowerGrid`, and `WaveRunner`, while `TextRenderer` reads
-`GameState` to produce output. Some objects in these modules are mutable,
-especially building power-connection and efficiency fields; prefer changing
-those fields through the existing `GameState` or `PowerGrid` entry points.
+`Enemy`, `PowerGrid`, and `WaveRunner`, while presentation layers read
+`GameState.snapshot()` to produce output. Some objects in these modules are
+mutable, especially building power-connection and efficiency fields; prefer
+changing those fields through the existing `GameState` or `PowerGrid` entry
+points.
 """
 

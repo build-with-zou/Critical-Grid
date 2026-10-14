@@ -9,8 +9,15 @@ random maps or mocks.
 """
 
 import unittest
+from dataclasses import FrozenInstanceError
 
-from grid_td.game_state import GameState
+from grid_td.game_state import (
+    CellSnapshot,
+    GameSnapshot,
+    GameState,
+    GameStatus,
+    PowerSnapshot,
+)
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from grid_td.renderer import TextRenderer
@@ -140,6 +147,123 @@ class CoreLoopTest(unittest.TestCase):
         first_map_row = rendered.splitlines()[1]
 
         self.assertEqual(first_map_row, "##...##.....")
+
+    def test_status_snapshot_exposes_gui_state(self) -> None:
+        """The status snapshot should cover top-bar state without mutable entities."""
+        game = GameState(create_demo_map())
+
+        game.core_overdraft(40)
+        status = game.status_snapshot()
+
+        self.assertEqual(status.gold, 220)
+        self.assertEqual(status.debt, 54)
+        self.assertEqual(status.core_hp, 30)
+        self.assertEqual(status.elapsed_seconds, 0)
+        self.assertEqual(status.wave_index, 0)
+        self.assertEqual(status.current_wave_name, "Wave 1")
+        self.assertFalse(status.waiting_for_next_wave)
+        self.assertFalse(status.is_finished)
+        self.assertEqual(status.result_message, "")
+        self.assertEqual(status.power.connected_count, 1)
+        self.assertEqual(status.power.total_supply, 10)
+        self.assertEqual(status.power.total_demand, 0)
+        self.assertEqual(status.power.efficiency, 1.0)
+
+    def test_cell_snapshot_marks_terrain_buildings_and_enemies(self) -> None:
+        """A cell snapshot should combine terrain, occupants, and display priority."""
+        game = GameState(create_demo_map())
+
+        illegal_cell = game.cell_snapshot(Position(0, 0))
+
+        self.assertEqual(illegal_cell.terrain, "illegal")
+        self.assertFalse(illegal_cell.is_buildable)
+        self.assertIsNone(illegal_cell.building)
+        self.assertEqual(illegal_cell.display_symbol, "#")
+
+        game.build("power_plant", Position(10, 2))
+        building_cell = game.cell_snapshot(Position(10, 2))
+
+        self.assertEqual(building_cell.terrain, "empty")
+        self.assertFalse(building_cell.is_buildable)
+        self.assertEqual(building_cell.building.kind, "power_plant")
+        self.assertEqual(building_cell.building.symbol, "P")
+        self.assertTrue(building_cell.building.connected_to_grid)
+        self.assertEqual(building_cell.display_symbol, "P")
+
+        game.step(0.0)
+        route_cell = game.cell_snapshot(Position(0, 4))
+
+        self.assertEqual(route_cell.terrain, "route")
+        self.assertTrue(route_cell.has_enemy)
+        self.assertEqual(route_cell.enemy_count, 1)
+        self.assertEqual(route_cell.enemies[0].name, "Basic")
+        self.assertEqual(route_cell.display_symbol, "e")
+
+    def test_board_snapshot_matches_map_size_and_is_read_only(self) -> None:
+        """The board snapshot should be immutable enough for presentation code."""
+        game = GameState(create_demo_map())
+
+        snapshot = game.snapshot()
+
+        self.assertEqual(snapshot.width, 12)
+        self.assertEqual(snapshot.height, 7)
+        self.assertEqual(len(snapshot.board), 7)
+        self.assertTrue(all(len(row) == 12 for row in snapshot.board))
+        self.assertIsInstance(snapshot.board, tuple)
+        self.assertIsInstance(snapshot.board[0], tuple)
+        self.assertEqual(snapshot.board[0][0].terrain, "illegal")
+        with self.assertRaises(FrozenInstanceError):
+            snapshot.board[0][0].terrain = "empty"
+
+    def test_cell_snapshot_rejects_out_of_bounds_position(self) -> None:
+        """Single-cell reads should fail clearly for invalid GUI coordinates."""
+        game = GameState(create_demo_map())
+
+        with self.assertRaises(ValueError):
+            game.cell_snapshot(Position(-1, 0))
+
+    def test_text_renderer_uses_snapshot_contract_only(self) -> None:
+        """Text rendering should not depend on GameState's mutable attributes."""
+        snapshot = GameSnapshot(
+            width=2,
+            height=1,
+            status=GameStatus(
+                gold=1,
+                debt=2,
+                core_hp=9,
+                elapsed_seconds=3,
+                wave_index=0,
+                current_wave_name="Test Wave",
+                waiting_for_next_wave=False,
+                is_finished=False,
+                result_message="",
+                power=PowerSnapshot(
+                    connected_count=1,
+                    total_supply=4,
+                    total_demand=5,
+                    efficiency=0.8,
+                ),
+            ),
+            board=(
+                (
+                    CellSnapshot(Position(0, 0), "empty", True, None, ()),
+                    CellSnapshot(Position(1, 0), "illegal", False, None, ()),
+                ),
+            ),
+        )
+
+        class SnapshotOnlyGame:
+            """Minimal stand-in proving the renderer only needs snapshot()."""
+
+            def snapshot(self) -> GameSnapshot:
+                return snapshot
+
+        rendered = TextRenderer().render(SnapshotOnlyGame())
+
+        self.assertEqual(
+            rendered,
+            "Wave=Test Wave Time=3s Gold=1 Debt=2 CoreHP=9 Power=4/5 Efficiency=80%\n.#",
+        )
 
     def test_waiting_for_next_wave_requires_spawn_complete_and_no_enemies(self) -> None:
         """Wave settlement should wait for both spawning and enemy cleanup."""
