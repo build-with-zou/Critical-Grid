@@ -6,8 +6,8 @@ time. It depends on building-type `SYMBOL` values, map terrain queries, and
 enemy route positions; `main.py` decides when to call `render()`.
 
 Cell drawing has a defined priority: buildings cover enemies, enemies cover
-routes, routes cover mine sites and high ground, and empty ground is last.
-New renderable entities must account for that priority and for how
+routes, routes cover mine sites, high ground, and blocked terrain, and empty
+ground is last. New renderable entities must account for that priority and for how
 `BUILDING_SYMBOLS` uses subclass `isinstance()` matching.
 """
 
@@ -71,6 +71,8 @@ class TextRenderer:
                     chars.append("m")
                 elif game.grid_map.is_high_ground(position):
                     chars.append("^")
+                elif game.grid_map.is_illegal(position):
+                    chars.append("#")
                 else:
                     chars.append(".")
 

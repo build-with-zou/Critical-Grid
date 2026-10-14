@@ -15,4 +15,5 @@ venv/
 # out of the tracked source tree.
 GAME_DESIGN.md
 DEVELOPMENT_REPORT.md
+AGENTS.md
 
