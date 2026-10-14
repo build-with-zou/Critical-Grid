@@ -1,12 +1,12 @@
 """Shared layout, color, and building-label constants for the GUI."""
 
 WINDOW_SIZE = (1080, 660)
-# 棋盘格坐标统一由左上角像素位置和单格边长换算，供绘制与鼠标命中共用。
+# Drawing and mouse hit detection share this board origin and cell size.
 BOARD_LEFT, BOARD_TOP, CELL = 35, 132, 53
 PANEL_LEFT = 720
 FPS = 60
 
-# 界面调色板：地形、电网、敌人和供电状态使用固定颜色，避免各视图重复定义。
+# Shared colors for terrain, the power grid, enemies, and charge status.
 BACKGROUND = (16, 23, 34)
 PANEL = (25, 36, 51)
 TEXT = (232, 239, 244)
@@ -27,7 +27,7 @@ ENEMY_COLORS = {
     "Saboteur": (197, 113, 206),
 }
 
-# 每项依次为建造类型、按钮文字、棋盘符号和符号底色。
+# Each entry contains the build kind, button label, board symbol, and symbol color.
 BUILD_KINDS = (
     ("mine", "Mine", "M", (211, 173, 75)),
     ("power_plant", "Power Plant", "P", (93, 191, 127)),
@@ -37,5 +37,5 @@ BUILD_KINDS = (
     ("slow_tower", "Slow Tower", "S", (167, 126, 213)),
 )
 SYMBOL_COLORS = {symbol: color for _, _, symbol, color in BUILD_KINDS}
-# 核心不在建造菜单中，但也需要独立的棋盘标识色。
+# The core is not buildable but still needs its own board color.
 SYMBOL_COLORS["C"] = (94, 216, 172)

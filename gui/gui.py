@@ -47,16 +47,16 @@ class CriticalGridGUI:
         self.sidebar = Sidebar(self.screen, self.manager, self.small_font, self.font)
         self.hud = HUD(self.screen, self.font, self.small_font, self.title_font)
         self.running = False
-        # 建造模式与炮塔选择互斥；检查位置独立保存，供侧栏展示格子详情。
+        # Build mode and tower selection are exclusive; inspection is independent.
         self.selected_kind: str | None = None
         self.selected_tower_id: int | None = None
         self.inspected_position: Position | None = None
-        # 渲染帧按真实时间累加，满一秒才推进一次游戏逻辑。
+        # Accumulate real frame time until a one-second game step is due.
         self.simulation_accumulator = 0.0
         self.message = "Click the map to inspect. Choose a building button before placing."
 
     def _handle_button(self, button: UIButton) -> None:
-        """分派侧栏按钮事件并同步界面选择状态。"""
+        """Dispatch sidebar actions and keep the selection state in sync."""
         if button in self.sidebar.build_buttons:
             if self.game.is_finished:
                 self.message = self.game.result_message
@@ -79,7 +79,7 @@ class CriticalGridGUI:
             self.running = not self.running
             self.simulation_accumulator = 0.0
             if not self.running:
-                # 暂停时立即显示逻辑位置，不留下停在半途的视觉补间。
+                # Finish movement interpolation when the simulation is paused.
                 self.board.finish_animation()
             self.sidebar.set_running(self.running)
             self.message = "Simulation running." if self.running else "Simulation paused."
@@ -91,20 +91,20 @@ class CriticalGridGUI:
             self._demolish_selected_tower()
 
     def _cancel_build(self) -> None:
-        """退出建造模式，不改变已经选中的检查位置。"""
+        """Leave build mode without changing the inspected position."""
         self.selected_kind = None
         self.sidebar.update_build_selection(None)
         self.message = "Build cancelled. Click the map to inspect."
 
     def _handle_board_click(self, mouse_pos: tuple[int, int]) -> None:
-        """检查格子或在当前建造模式下尝试放置建筑。"""
+        """Inspect a cell or try to place the selected building there."""
         position = self.board.position_at(mouse_pos)
         if position is None:
             return
         self.inspected_position = position
         building_at_position = self.game.building_at(position)
         if self.selected_kind is None:
-            # 普通点击只选择炮塔；其他建筑和地形仍可在侧栏查看。
+            # Only towers become selected; all cells can still be inspected.
             self.selected_tower_id = (
                 building_at_position.id if isinstance(building_at_position, Tower) else None
             )
@@ -130,7 +130,7 @@ class CriticalGridGUI:
             return
         self.selected_tower_id = None
         try:
-            # 地形、资源与位置是否合法由 GameState.build 统一判定。
+            # GameState.build validates terrain, resources, and placement.
             building = self.game.build(self.selected_kind, position)
         except ValueError as error:
             self.message = f"Build failed: {error}"
@@ -148,14 +148,14 @@ class CriticalGridGUI:
             self.sidebar.update_build_selection(None)
 
     def _tower_reaches_route(self, tower: Tower) -> bool:
-        """判断炮塔曼哈顿射程是否覆盖至少一个敌人路径格。"""
+        """Check whether the tower's Manhattan range reaches any route cell."""
         return any(
             tower.position.manhattan_distance(position) <= tower.range
             for position in self.game.grid_map.route
         )
 
     def _demolish_selected_tower(self) -> None:
-        """拆除当前炮塔并清除选择，错误原因由游戏逻辑返回。"""
+        """Demolish the selected tower and clear its selection."""
         if self.game.is_finished:
             self.message = self.game.result_message
             return
@@ -174,7 +174,7 @@ class CriticalGridGUI:
         self.selected_tower_id = None
 
     def _overload_selected_tower(self) -> None:
-        """向 GameState 提交当前炮塔的过载操作。"""
+        """Ask GameState to overload the selected tower."""
         if self.game.is_finished:
             self.message = self.game.result_message
             return
@@ -194,18 +194,18 @@ class CriticalGridGUI:
             )
 
     def _advance_once(self, *, animate: bool = False) -> None:
-        """推进一秒逻辑，同时为棋盘动画保存步进前后的状态。"""
+        """Advance one logic second and capture states for board animation."""
         if self.game.is_finished:
             self.message = self.game.result_message
             return
         before = self.board.capture_progress()
         combat_before = self.board.capture_combat()
-        # 先截取可见状态再结算战斗，光束和位移效果只反映已发生的结果。
+        # Snapshot first so movement and beams reflect resolved game actions.
         self.game.step(1.0)
         self.board.complete_step(before, animate=animate)
         self.board.show_combat_results(combat_before, 1.0)
         if self.game.waiting_for_next_wave:
-            # 波次结算后立即开启下一波，胜负结果仍由 GameState 决定。
+            # Settle the wave and start the next one if the game continues.
             self.message = self.game.end_wave()
             if not self.game.is_finished:
                 self.game.start_next_wave()
@@ -221,7 +221,7 @@ class CriticalGridGUI:
         try:
             active = True
             while active:
-                # 限制单帧 dt，避免窗口卡顿后动画和逻辑时间突然大幅跳跃。
+                # Cap frame time to limit animation jumps after a window stall.
                 dt = min(self.clock.tick(FPS) / 1000.0, 0.25)
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
@@ -240,7 +240,7 @@ class CriticalGridGUI:
 
                 if self.running:
                     self.simulation_accumulator += dt
-                    # 固定一秒逻辑步长；渲染仍以实际帧率更新动画。
+                    # Run fixed one-second logic steps while rendering every frame.
                     while self.simulation_accumulator >= 1.0 and self.running:
                         self.simulation_accumulator -= 1.0
                         self._advance_once(animate=True)

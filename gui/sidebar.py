@@ -33,7 +33,7 @@ class Sidebar:
         self.font = font
         self.heading_font = heading_font
         self.build_buttons: dict[UIButton, str] = {}
-        # 按钮对象映射到建造类型，点击事件可以直接查询，无需依赖按钮文字。
+        # Map button objects to build kinds so clicks do not depend on button text.
         for index, (kind, label, _, _) in enumerate(BUILD_KINDS):
             col, row = index % 2, index // 2
             button = UIButton(
@@ -58,7 +58,7 @@ class Sidebar:
         self.update_build_selection(None)
 
     def update_build_selection(self, selected_kind: str | None) -> None:
-        """用按钮文字前缀标出当前建造类型。"""
+        """Mark the selected build kind with a prefix on its button."""
         labels = {kind: label for kind, label, _, _ in BUILD_KINDS}
         for button, kind in self.build_buttons.items():
             marker = "> " if kind == selected_kind else "  "
@@ -73,7 +73,7 @@ class Sidebar:
         selected_kind: str | None,
         inspected_position: Position | None,
     ) -> None:
-        """绘制面板背景、操作模式和当前格子的三行说明。"""
+        """Draw the panel, interaction mode, and three lines of tile details."""
         pygame.draw.rect(
             self.screen, PANEL, pygame.Rect(PANEL_LEFT, 132, 347, 424), border_radius=7
         )
@@ -88,7 +88,7 @@ class Sidebar:
         )
         for index, line in enumerate(self.inspection_lines(game, inspected_position)):
             color = MUTED
-            # 建筑详情的第二行是供电状态，使用和棋盘外环一致的颜色。
+            # Match the power-status line to the building's status ring on the board.
             if index == 1 and inspected_building is not None:
                 color = (
                     CHARGED_COLOR
@@ -109,7 +109,7 @@ class Sidebar:
     def inspection_lines(
         game: GameState, position: Position | None
     ) -> tuple[str, str, str]:
-        """根据选中格子的建筑或地形生成固定三行的检查信息。"""
+        """Describe the selected building or terrain in exactly three lines."""
         if position is None:
             return (
                 "Click a tile to inspect its terrain.",
@@ -120,7 +120,7 @@ class Sidebar:
         building: Building | None = game.building_at(position)
         coordinate = f"({position.x}, {position.y})"
         if building is not None:
-            # 核心生命值由 GameState 单独维护，其余建筑读取自身生命值。
+            # GameState owns core HP; other buildings store their own HP.
             current_hp = game.core_hp if isinstance(building, Core) else building.hp
             charged = building.connected_to_grid and building.efficiency > 0
             power_status = "CHARGED" if charged else "NOT CHARGED"
