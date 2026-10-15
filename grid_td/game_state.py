@@ -397,9 +397,10 @@ class GameState:
             The newly created `Building` subclass instance.
 
         Raises:
-            ValueError: Position is out of bounds or not buildable, occupied,
+            ValueError: The game has ended, the core is destroyed, or the
+                position is out of bounds or not buildable, occupied,
                 incompatible with mine-site rules, unknown by kind, or too
-                expensive.
+                expensive. Rejected calls leave state unchanged.
 
         Side effects:
             Spends build cost, appends the building, and immediately
@@ -407,6 +408,10 @@ class GameState:
             before checking gold, so failed insufficient-gold attempts still
             consume an internal ID; callers should not rely on gapless IDs.
         """
+        # Terminal games must reject commands before validating placement or
+        # allocating an entity ID, so building cannot mutate a finished run.
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot build after the game has ended.")
         if not self.grid_map.is_buildable(position):
             raise ValueError(f"Position is not buildable: {position}")
         if self.building_at(position) is not None:
@@ -439,19 +444,24 @@ class GameState:
             no waves remain.
 
         Raises:
-            ValueError: Current gold is below the intel price.
+            ValueError: The game has ended, the core is destroyed, or current
+                gold is below the intel price. Rejected calls leave state
+                unchanged.
 
         Note:
-            Gold is spent before checking whether a wave remains, so calling
-            this after victory still costs 8 gold. That is current prototype
-            behavior; changing it should update tests and UI expectations.
+            When no waves remain in a non-terminal state, this returns
+            `"No incoming wave."` without charging the intel price.
         """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot buy intel after the game has ended.")
+        # Check availability before charging so an empty schedule is free.
+        if self.wave_index >= len(self.waves):
+            return "No incoming wave."
+
         cost = 8
         if self.gold < cost:
             raise ValueError("Not enough gold to buy intel.")
         self.gold -= cost
-        if self.wave_index >= len(self.waves):
-            return "No incoming wave."
         return self.waves[self.wave_index].briefing
 
     def core_overdraft(self, gold_amount: int = 40) -> None:
