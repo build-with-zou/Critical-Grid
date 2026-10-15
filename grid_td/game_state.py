@@ -24,6 +24,7 @@ resources directly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 
 from grid_td.buildings import (
     Building,
@@ -457,33 +458,71 @@ class GameState:
         """Immediately add gold while increasing debt by 1.35x.
 
         Args:
-            gold_amount: Gold gained from the overdraft, defaulting to 40. The
-                current implementation does not validate sign, so gameplay
-                callers should pass positive values only.
+            gold_amount: Positive integer gold gain, defaulting to 40.
+                Booleans and floats are not accepted.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, the amount
+                is not a positive integer, or its debt calculation overflows.
+                Rejected calls leave all state unchanged.
 
         Side effects:
             Increases `gold` and `debt`; interest is settled in `end_wave()`.
         """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot overdraft after the game has ended.")
+        if (
+            isinstance(gold_amount, bool)
+            or not isinstance(gold_amount, int)
+            or gold_amount <= 0
+        ):
+            raise ValueError("Overdraft amount must be a positive integer.")
+        # Calculate before spending so overflow cannot leave a partial update.
+        try:
+            debt_increase = round(gold_amount * 1.35)
+        except OverflowError:
+            raise ValueError("Overdraft amount is too large to calculate debt.") from None
+
         self.gold += gold_amount
-        self.debt += round(gold_amount * 1.35)
+        self.debt += debt_increase
 
     def overload_tower(self, building_id: int, seconds: float = 8.0) -> None:
         """Temporarily overload a tower and register repair/debt costs.
 
         Args:
-            building_id: Building ID of the target tower.
-            seconds: Logical seconds of overload duration, defaulting to 8.
+            building_id: Positive integer ID of the target tower, not a boolean.
+            seconds: Finite positive int or float duration in logical seconds,
+                defaulting to 8. Booleans are not accepted.
 
         Raises:
-            ValueError: No tower with the given ID exists.
+            ValueError: The game has ended, the core is destroyed, the ID or
+                duration is invalid, or no tower with that ID exists.
+                Rejected calls leave all state unchanged.
 
         Side effects:
             Extends the tower's overload timer, marks it for repair, and adds
             10 debt. Repeated calls still add debt each time, while the tower
             only keeps the longer overload window.
         """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot overload a tower after the game has ended.")
+        if (
+            isinstance(building_id, bool)
+            or not isinstance(building_id, int)
+            or building_id <= 0
+        ):
+            raise ValueError("Tower ID must be a positive integer.")
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            raise ValueError("Overload duration must be a finite positive number.")
+        try:
+            duration = float(seconds)
+        except OverflowError:
+            raise ValueError("Overload duration must be a finite positive number.") from None
+        if not isfinite(duration) or duration <= 0:
+            raise ValueError("Overload duration must be a finite positive number.")
+
         tower = self.find_tower(building_id)
-        tower.overload(seconds)
+        tower.overload(duration)
         tower.needs_repair = True
         self.debt += 10
 
