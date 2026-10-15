@@ -77,6 +77,11 @@ if game.snapshot().status.waiting_for_next_wave:
 The normal text/GUI call sequence is unchanged. Frontends that expose these
 commands directly should catch `ValueError` and display its message.
 
+Build and intel commands also reject a destroyed core or ended game without
+changing state. `buy_wave_intel()` checks wave availability before charging:
+when no waves remain in a non-terminal state it returns `"No incoming wave."`
+for free.
+
 ## Simulation Clock
 
 `GameState` owns the authoritative logical clock. Each call to
