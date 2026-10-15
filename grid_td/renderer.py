@@ -32,9 +32,12 @@ class TextRenderer:
         status = snapshot.status
         report = status.power
         rows = ["".join(cell.display_symbol for cell in row) for row in snapshot.board]
+        # Keep whole-second demos compact while preserving fractional time for
+        # fixed-step simulations such as 0.05-second updates.
+        elapsed = f"{status.elapsed_seconds:g}"
         header = (
             f"Wave={status.current_wave_name} "
-            f"Time={status.elapsed_seconds}s "
+            f"Time={elapsed}s "
             f"Gold={status.gold} "
             f"Debt={status.debt} "
             f"CoreHP={status.core_hp} "

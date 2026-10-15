@@ -77,6 +77,20 @@ if game.snapshot().status.waiting_for_next_wave:
 The normal text/GUI call sequence is unchanged. Frontends that expose these
 commands directly should catch `ValueError` and display its message.
 
+## Simulation Clock
+
+`GameState` owns the authoritative logical clock. Each call to
+`game.step(seconds)` advances that same finite, non-negative delta through the
+wave scheduler, tower cooldowns, overload timers, enemy movement, and
+`elapsed_seconds`. A fixed-step caller can use `0.05` seconds for 20 logical
+updates per second; the core does not start its own timer or event loop.
+
+`elapsed_seconds` is a float so fractional steps accumulate without integer
+rounding. `step(0)` remains valid and processes events scheduled at
+logical time zero. Invalid durations, including negative, non-finite, boolean,
+string, and unrepresentably large values, raise `ValueError` without changing
+state.
+
 ## Emergency Commands
 
 - `core_overdraft(gold_amount=40)` accepts a positive integer, excluding
