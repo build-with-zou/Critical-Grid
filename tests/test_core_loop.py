@@ -120,6 +120,7 @@ class CoreLoopTest(unittest.TestCase):
         self.assertTrue(tower.needs_repair)
         self.assertEqual(game.debt, 10)
 
+        game.step(30.0)
         game.end_wave()
 
         self.assertFalse(tower.needs_repair)

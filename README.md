@@ -51,6 +51,32 @@ Recommended reading order:
    supporting rules and output.
 7. `tests/test_core_loop.py` for the currently protected behavior.
 
+## Wave Lifecycle
+
+The first wave runner is created automatically by `GameState(...)`. After each
+step, use the snapshot to check whether the wave can be settled:
+
+```python
+if game.snapshot().status.waiting_for_next_wave:
+    message = game.end_wave()
+    if not game.snapshot().status.is_finished:
+        game.start_next_wave()
+```
+
+- `waiting_for_next_wave` is true only while the game is unfinished, the core
+  is alive, spawning is complete, and no enemies remain.
+- `end_wave()` returns a settlement string. It pays mine income, charges
+  interest and repairs, clears repair markers, advances the wave index, and
+  removes the runner exactly once. Settling the final wave records victory.
+- `start_next_wave()` returns `None` and creates the next runner only after
+  settlement. It cannot restart an active or cleared-but-unsettled wave.
+- Both commands raise `ValueError` for invalid transitions, including calls
+  after victory or defeat, and leave state unchanged on rejection. Defeat is
+  recorded by `step()` and is not followed by wave settlement.
+
+The normal text/GUI call sequence is unchanged. Frontends that expose these
+commands directly should catch `ValueError` and display its message.
+
 ## Project Structure
 
 ```text

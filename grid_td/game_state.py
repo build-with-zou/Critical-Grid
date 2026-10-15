@@ -220,13 +220,13 @@ class GameState:
 
     @property
     def waiting_for_next_wave(self) -> bool:
-        """Return whether spawning is complete and no enemies remain.
+        """Return whether an unfinished game has a wave ready to settle.
 
-        Both conditions must hold before `end_wave()` is allowed. Spawning
-        completion alone cannot settle the wave early, or unbeaten enemies
-        would be skipped.
+        Spawning must be complete and no enemies may remain before
+        `end_wave()` is allowed. A finished game or destroyed core is never
+        ready for settlement.
         """
-        if self.wave_runner is None:
+        if self.is_finished or self.core_hp <= 0 or self.wave_runner is None:
             return False
         return self.wave_runner.is_complete and not self.enemies
 
@@ -488,15 +488,23 @@ class GameState:
         self.debt += 10
 
     def start_next_wave(self) -> None:
-        """Create a runner for the current `wave_index`, or mark victory.
+        """Start the next wave after the previous wave has been settled.
 
-        `wave_index` is advanced by `end_wave()`. This method only instantiates
-        a runner for the current index, so the normal order is to settle the
-        previous wave before starting the next one.
+        The first runner is created automatically during initialization.
+        `end_wave()` advances `wave_index` and clears the previous runner;
+        this method creates a fresh runner without changing resources.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, the previous
+                wave has not been settled, or no waves remain. Rejected calls
+                leave all state unchanged. Only final settlement grants victory.
         """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot start a wave after the game has ended.")
+        if self.wave_runner is not None:
+            raise ValueError("Settle the current wave before starting the next wave.")
         if self.wave_index >= len(self.waves):
-            self.result_message = "Victory. All waves cleared."
-            return
+            raise ValueError("No waves remain to start.")
         self.wave_runner = WaveRunner(self.waves[self.wave_index])
 
     def end_wave(self) -> str:
@@ -505,14 +513,26 @@ class GameState:
         Returns:
             A settlement summary intended for the text interface.
 
+        Raises:
+            ValueError: The game has ended, the core is destroyed, there is no
+                active wave, spawning is incomplete, or enemies remain.
+                Rejected calls leave all state unchanged.
+
         Side effects:
             Mines produce gold at current efficiency, debt charges 12%
             interest, and each repair-marked building costs 5 gold. Repair
             markers are cleared, `wave_index` advances, and the runner is
-            cleared. If the core is destroyed or the final wave is complete,
-            `result_message` is written. This does not restore building HP
-            because `Building.hp` is not mutable in the current prototype.
+            cleared. The final wave's settlement records victory. Defeat is
+            handled by `step()` and cannot be settled. This does not restore
+            building HP because `Building.hp` is not mutable in the prototype.
         """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot settle a wave after the game has ended.")
+        if self.wave_runner is None:
+            raise ValueError("No active wave to settle.")
+        if not self.waiting_for_next_wave:
+            raise ValueError("Cannot settle until spawning is complete and no enemies remain.")
+
         mine_income = sum(
             building.collect_income()
             for building in self.buildings
@@ -532,9 +552,7 @@ class GameState:
         self.wave_index += 1
         self.wave_runner = None
 
-        if self.core_hp <= 0:
-            self.result_message = "Defeat. The core was destroyed."
-        elif self.wave_index >= len(self.waves):
+        if self.wave_index >= len(self.waves):
             self.result_message = "Victory. All waves cleared."
 
         return (
