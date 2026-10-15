@@ -153,7 +153,7 @@ class GameStatus:
     gold: int
     debt: int
     core_hp: int
-    elapsed_seconds: int
+    elapsed_seconds: float
     wave_index: int  # Zero-based index into the configured wave tuple.
     current_wave_name: str
     waiting_for_next_wave: bool
@@ -191,7 +191,7 @@ class GameState:
     gold: int = 180  # Current spendable gold; build, intel, and settlement change it.
     debt: int = 0  # Debt from overdraft/overload; interest is charged at wave end.
     core_hp: int = 30  # Remaining core health; escaped enemies reduce it.
-    elapsed_seconds: int = 0  # Display-oriented integer logical time from step().
+    elapsed_seconds: float = 0.0  # Authoritative logical clock, measured in seconds.
     buildings: list[Building] = field(default_factory=list)  # Current building entities.
     enemies: list[Enemy] = field(default_factory=list)  # Living enemies on the board.
 
@@ -603,8 +603,13 @@ class GameState:
         """Advance the game by one logical time step.
 
         Args:
-            seconds: Float logical seconds to advance. Callers should pass a
-                non-negative value.
+            seconds: Finite, non-negative logical seconds to advance. Zero is
+                allowed so callers can process events scheduled at time zero.
+
+        Raises:
+            ValueError: If `seconds` is a boolean, not numeric, negative,
+                non-finite, or too large to represent as a float. Rejected
+                calls leave the game state unchanged.
 
         Order:
             Spawn due enemies first, recalculate power, run tower attacks, and
@@ -612,22 +617,35 @@ class GameState:
             enemies in the same step, while enemies do not move before attacks.
 
         Side effects:
-            Changes time, wave runner state, building cooldowns, enemy health
-            and positions, gold, and core health. `elapsed_seconds` uses
-            integer accumulation via `round(seconds)`, while waves, cooldowns,
-            and movement still use the original float `seconds`.
+            Changes the shared logical clock, wave runner state, building
+            cooldowns, enemy health and positions, gold, and core health. The
+            exact same `seconds` delta is passed to every time-dependent
+            subsystem, so the GameState clock remains the single simulation
+            time source.
         """
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            raise ValueError("Step duration must be a finite non-negative number.")
+        try:
+            delta = float(seconds)
+        except OverflowError:
+            raise ValueError("Step duration must be a finite non-negative number.") from None
+        if not isfinite(delta) or delta < 0:
+            raise ValueError("Step duration must be a finite non-negative number.")
+
         if self.is_finished:
             return
 
-        self.elapsed_seconds += round(seconds)
+        # Advance the authoritative clock with the exact logical delta. The
+        # previous integer rounding caused repeated 0.05-second steps to lose
+        # time even though enemies and cooldowns were already using floats.
+        self.elapsed_seconds += delta
 
         if self.wave_runner is not None:
-            self.enemies.extend(self.wave_runner.step(seconds))
+            self.enemies.extend(self.wave_runner.step(delta))
 
         self.recalculate_power()
-        self._towers_attack(seconds)
-        self._advance_enemies(seconds)
+        self._towers_attack(delta)
+        self._advance_enemies(delta)
 
         if self.core_hp <= 0:
             self.core_hp = 0

@@ -327,6 +327,42 @@ class CoreLoopTest(unittest.TestCase):
         self.assertEqual(game.elapsed_seconds, 0)
         self.assertEqual(game.enemies, [])
 
+    def test_step_accumulates_fractional_logical_time(self) -> None:
+        """Small fixed steps should advance every subsystem by exact float time."""
+        game = GameState(create_demo_map())
+
+        for _ in range(20):
+            game.step(0.05)
+
+        self.assertAlmostEqual(game.elapsed_seconds, 1.0)
+        self.assertAlmostEqual(game.wave_runner.elapsed_seconds, 1.0)
+
+    def test_step_rejects_invalid_durations_without_changing_state(self) -> None:
+        """Invalid deltas must not partially advance the clock or wave runner."""
+        invalid_durations = (
+            -0.05,
+            True,
+            False,
+            "0.05",
+            None,
+            float("nan"),
+            float("inf"),
+            -float("inf"),
+            10**1000,
+        )
+
+        for seconds in invalid_durations:
+            with self.subTest(seconds=seconds):
+                game = GameState(create_demo_map())
+                before = game.snapshot()
+                runner = game.wave_runner
+                with self.assertRaises(ValueError):
+                    game.step(seconds)
+
+                self.assertEqual(game.snapshot(), before)
+                self.assertIs(game.wave_runner, runner)
+                self.assertEqual(runner.elapsed_seconds, 0.0)
+
     def test_demo_wave_can_advance_without_crashing(self) -> None:
         """The default map and basic defense should run for multiple steps."""
         game = GameState(create_demo_map())
