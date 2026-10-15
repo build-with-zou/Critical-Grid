@@ -77,6 +77,23 @@ if game.snapshot().status.waiting_for_next_wave:
 The normal text/GUI call sequence is unchanged. Frontends that expose these
 commands directly should catch `ValueError` and display its message.
 
+## Emergency Commands
+
+- `core_overdraft(gold_amount=40)` accepts a positive integer, excluding
+  booleans and floats. It adds the amount to gold and `round(amount * 1.35)`
+  to debt. Amounts that overflow the debt calculation are rejected.
+- `overload_tower(building_id, seconds=8.0)` requires a positive integer ID
+  belonging to an existing tower and a finite positive `int` or `float`
+  duration representable as a float. Booleans are rejected for both arguments.
+  Each successful call adds 10 debt and marks the tower for repair; repeated
+  calls keep the longer remaining overload duration.
+- Both commands return `None`. They raise `ValueError` for invalid arguments,
+  a destroyed core, or an ended game, without changing gold, debt, repair
+  markers, or overload timers. Frontends should catch and display this error.
+
+Default arguments and valid calls keep their existing behavior. The GUI's
+selected-tower call `game.overload_tower(tower.id)` remains supported.
+
 ## Project Structure
 
 ```text
