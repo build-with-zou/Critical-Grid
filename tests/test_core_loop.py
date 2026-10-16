@@ -249,6 +249,8 @@ class CoreLoopTest(unittest.TestCase):
         snapshot = GameSnapshot(
             width=2,
             height=1,
+            cell_size=1.0,
+            distance_metric="manhattan",
             status=GameStatus(
                 phase=GamePhase.NIGHT,
                 gold=1,
