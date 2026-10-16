@@ -10,10 +10,12 @@ instead of reading mutable attributes directly.
 Key state-flow boundaries:
 
 * `build()` changes the building list and gold, then recalculates power.
-* `step()` spawns enemies, recalculates power, runs tower attacks, then moves
-  enemies.
-* `end_wave()` settles income, interest, and repairs; `start_next_wave()`
-  creates the next runner.
+* New games start in DAY with no active wave runner.
+* `start_next_wave()` ends planning and creates a fresh NIGHT runner.
+* During NIGHT, `step()` spawns enemies, recalculates power, runs tower
+  attacks, then moves enemies. During DAY it leaves simulation time frozen.
+* `end_wave()` settles income, interest, and repairs, then enters the next
+  DAY or records VICTORY. Core destruction records DEFEAT immediately.
 
 This module does not handle input devices or UI rendering. `TextRenderer`
 should only read state from here. Add new gameplay operations as explicit
@@ -24,6 +26,7 @@ resources directly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from math import isfinite
 
 from grid_td.buildings import (
@@ -43,6 +46,19 @@ from grid_td.map import GridMap
 from grid_td.position import Position
 from grid_td.power_grid import PowerGrid, PowerReport
 from grid_td.waves import WaveRunner, create_demo_waves
+
+
+class GamePhase(str, Enum):
+    """Lifecycle stages exposed by the core and read-only snapshots.
+
+    Pause is controlled by the caller withholding step() calls; it does not
+    replace DAY or NIGHT. String values provide stable frontend labels.
+    """
+
+    DAY = "day"
+    NIGHT = "night"
+    VICTORY = "victory"
+    DEFEAT = "defeat"
 
 
 @dataclass(frozen=True)
@@ -160,6 +176,7 @@ class GameStatus:
     is_finished: bool
     result_message: str
     power: PowerSnapshot
+    phase: GamePhase  # DAY planning, NIGHT combat, or a terminal result.
 
 
 @dataclass(frozen=True)
@@ -194,6 +211,7 @@ class GameState:
     elapsed_seconds: float = 0.0  # Authoritative logical clock, measured in seconds.
     buildings: list[Building] = field(default_factory=list)  # Current building entities.
     enemies: list[Enemy] = field(default_factory=list)  # Living enemies on the board.
+    phase: GamePhase = field(default=GamePhase.DAY, init=False)
 
     def __post_init__(self) -> None:
         """Initialize runtime collaborators, wave state, the core, and power.
@@ -207,7 +225,9 @@ class GameState:
         self.power_grid = PowerGrid()
         self.waves = create_demo_waves()
         self.wave_index = 0
-        self.wave_runner: WaveRunner | None = WaveRunner(self.waves[0])
+        # The upcoming wave index exists during planning, but its clock must
+        # not start until the player explicitly ends the day.
+        self.wave_runner: WaveRunner | None = None
         self.next_building_id = 1
         self.result_message = ""
         self.latest_power_report = PowerReport(0, 0, 0, 1.0)
@@ -216,8 +236,11 @@ class GameState:
 
     @property
     def is_finished(self) -> bool:
-        """Return whether a victory or defeat result has been recorded."""
-        return bool(self.result_message)
+        """Return whether a terminal phase or existing result ends the run."""
+        return (
+            self.phase in (GamePhase.VICTORY, GamePhase.DEFEAT)
+            or bool(self.result_message)
+        )
 
     @property
     def waiting_for_next_wave(self) -> bool:
@@ -227,7 +250,12 @@ class GameState:
         `end_wave()` is allowed. A finished game or destroyed core is never
         ready for settlement.
         """
-        if self.is_finished or self.core_hp <= 0 or self.wave_runner is None:
+        if (
+            self.is_finished
+            or self.core_hp <= 0
+            or self.phase != GamePhase.NIGHT
+            or self.wave_runner is None
+        ):
             return False
         return self.wave_runner.is_complete and not self.enemies
 
@@ -265,6 +293,7 @@ class GameState:
             waiting_for_next_wave=self.waiting_for_next_wave,
             is_finished=self.is_finished,
             result_message=self.result_message,
+            phase=self.phase,
             power=PowerSnapshot(
                 connected_count=report.connected_count,
                 total_supply=report.total_supply,
@@ -537,24 +566,27 @@ class GameState:
         self.debt += 10
 
     def start_next_wave(self) -> None:
-        """Start the next wave after the previous wave has been settled.
+        """End the current DAY and start the upcoming NIGHT.
 
-        The first runner is created automatically during initialization.
-        `end_wave()` advances `wave_index` and clears the previous runner;
-        this method creates a fresh runner without changing resources.
+        This also starts the first night: initialization deliberately leaves
+        the game in DAY with no runner. After later nights, end_wave() advances
+        wave_index and returns to DAY. Starting never settles costs, advances
+        the wave index, or generates enemies; the next step() does that.
 
         Raises:
-            ValueError: The game has ended, the core is destroyed, the previous
-                wave has not been settled, or no waves remain. Rejected calls
-                leave all state unchanged. Only final settlement grants victory.
+            ValueError: The game has ended, the core is destroyed, the phase
+                is not DAY, a runner already exists, or no waves remain.
+                Rejected calls leave all state unchanged. Only final settlement
+                grants victory.
         """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot start a wave after the game has ended.")
-        if self.wave_runner is not None:
+        if self.phase != GamePhase.DAY or self.wave_runner is not None:
             raise ValueError("Settle the current wave before starting the next wave.")
         if self.wave_index >= len(self.waves):
             raise ValueError("No waves remain to start.")
         self.wave_runner = WaveRunner(self.waves[self.wave_index])
+        self.phase = GamePhase.NIGHT
 
     def end_wave(self) -> str:
         """Settle income, interest, and repairs, then advance the wave index.
@@ -571,13 +603,14 @@ class GameState:
             Mines produce gold at current efficiency, debt charges 12%
             interest, and each repair-marked building costs 5 gold. Repair
             markers are cleared, `wave_index` advances, and the runner is
-            cleared. The final wave's settlement records victory. Defeat is
-            handled by `step()` and cannot be settled. This does not restore
+            cleared. Other nights return to DAY for unlimited planning; the
+            final wave's settlement records VICTORY. Defeat is handled by
+            `step()` and cannot be settled. This does not restore
             building HP because `Building.hp` is not mutable in the prototype.
         """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot settle a wave after the game has ended.")
-        if self.wave_runner is None:
+        if self.phase != GamePhase.NIGHT or self.wave_runner is None:
             raise ValueError("No active wave to settle.")
         if not self.waiting_for_next_wave:
             raise ValueError("Cannot settle until spawning is complete and no enemies remain.")
@@ -602,7 +635,12 @@ class GameState:
         self.wave_runner = None
 
         if self.wave_index >= len(self.waves):
+            self.phase = GamePhase.VICTORY
             self.result_message = "Victory. All waves cleared."
+        else:
+            # Settlement and starting are separate commands. This preserves
+            # a planning window and prevents another night starting by itself.
+            self.phase = GamePhase.DAY
 
         return (
             f"Wave ended. Mine income +{mine_income}, "
@@ -610,11 +648,11 @@ class GameState:
         )
 
     def step(self, seconds: float) -> None:
-        """Advance the game by one logical time step.
+        """Advance one NIGHT time step; freeze simulation during DAY.
 
         Args:
             seconds: Finite, non-negative logical seconds to advance. Zero is
-                allowed so callers can process events scheduled at time zero.
+                allowed so callers can process night events scheduled at zero.
 
         Raises:
             ValueError: If `seconds` is a boolean, not numeric, negative,
@@ -632,6 +670,10 @@ class GameState:
             exact same `seconds` delta is passed to every time-dependent
             subsystem, so the GameState clock remains the single simulation
             time source.
+
+        DAY and finished games accept valid durations without advancing the
+        clock, cooldowns, overload/slow timers, or spawning. Validate the input
+        first so invalid durations still raise during planning or after a result.
         """
         if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
             raise ValueError("Step duration must be a finite non-negative number.")
@@ -643,6 +685,16 @@ class GameState:
             raise ValueError("Step duration must be a finite non-negative number.")
 
         if self.is_finished:
+            return
+
+        # A destroyed core takes precedence over planning or further combat.
+        # This also handles states constructed with zero starting health.
+        if self.core_hp <= 0:
+            self.core_hp = 0
+            self.phase = GamePhase.DEFEAT
+            self.result_message = "Defeat. The core was destroyed."
+            return
+        if self.phase == GamePhase.DAY:
             return
 
         # Advance the authoritative clock with the exact logical delta. The
@@ -659,6 +711,7 @@ class GameState:
 
         if self.core_hp <= 0:
             self.core_hp = 0
+            self.phase = GamePhase.DEFEAT
             self.result_message = "Defeat. The core was destroyed."
 
     def recalculate_power(self) -> PowerReport:

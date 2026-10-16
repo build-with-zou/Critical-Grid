@@ -13,6 +13,7 @@ from dataclasses import FrozenInstanceError
 
 from grid_td.game_state import (
     CellSnapshot,
+    GamePhase,
     GameSnapshot,
     GameState,
     GameStatus,
@@ -120,6 +121,7 @@ class CoreLoopTest(unittest.TestCase):
         self.assertTrue(tower.needs_repair)
         self.assertEqual(game.debt, 10)
 
+        game.start_next_wave()
         game.step(30.0)
         game.end_wave()
 
@@ -177,6 +179,7 @@ class CoreLoopTest(unittest.TestCase):
         self.assertEqual(status.debt, 54)
         self.assertEqual(status.core_hp, 30)
         self.assertEqual(status.elapsed_seconds, 0)
+        self.assertEqual(status.phase, GamePhase.DAY)
         self.assertEqual(status.wave_index, 0)
         self.assertEqual(status.current_wave_name, "Wave 1")
         self.assertFalse(status.waiting_for_next_wave)
@@ -208,6 +211,7 @@ class CoreLoopTest(unittest.TestCase):
         self.assertTrue(building_cell.building.connected_to_grid)
         self.assertEqual(building_cell.display_symbol, "P")
 
+        game.start_next_wave()
         game.step(0.0)
         route_cell = game.cell_snapshot(Position(0, 4))
 
@@ -246,6 +250,7 @@ class CoreLoopTest(unittest.TestCase):
             width=2,
             height=1,
             status=GameStatus(
+                phase=GamePhase.NIGHT,
                 gold=1,
                 debt=2,
                 core_hp=9,
@@ -280,7 +285,7 @@ class CoreLoopTest(unittest.TestCase):
 
         self.assertEqual(
             rendered,
-            "Wave=Test Wave Time=3s Gold=1 Debt=2 CoreHP=9 Power=4/5 Efficiency=80%\n.#",
+            "Phase=night Wave=Test Wave Time=3s Gold=1 Debt=2 CoreHP=9 Power=4/5 Efficiency=80%\n.#",
         )
 
     def test_waiting_for_next_wave_requires_spawn_complete_and_no_enemies(self) -> None:
@@ -289,6 +294,7 @@ class CoreLoopTest(unittest.TestCase):
 
         self.assertFalse(game.waiting_for_next_wave)
 
+        game.start_next_wave()
         game.step(8.0)
 
         self.assertTrue(game.wave_runner.is_complete)
@@ -304,6 +310,7 @@ class CoreLoopTest(unittest.TestCase):
         """Wave settlement should advance the index and restart the runner."""
         game = GameState(create_demo_map())
 
+        game.start_next_wave()
         game.step(30.0)
         message = game.end_wave()
 
@@ -330,6 +337,7 @@ class CoreLoopTest(unittest.TestCase):
     def test_step_accumulates_fractional_logical_time(self) -> None:
         """Small fixed steps should advance every subsystem by exact float time."""
         game = GameState(create_demo_map())
+        game.start_next_wave()
 
         for _ in range(20):
             game.step(0.05)
@@ -354,6 +362,7 @@ class CoreLoopTest(unittest.TestCase):
         for seconds in invalid_durations:
             with self.subTest(seconds=seconds):
                 game = GameState(create_demo_map())
+                game.start_next_wave()
                 before = game.snapshot()
                 runner = game.wave_runner
                 with self.assertRaises(ValueError):
@@ -369,6 +378,7 @@ class CoreLoopTest(unittest.TestCase):
         game.build("power_plant", Position(10, 2))
         game.build("gun_tower", Position(10, 3))
 
+        game.start_next_wave()
         for _ in range(20):
             game.step(1.0)
 
