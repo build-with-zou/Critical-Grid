@@ -55,7 +55,14 @@ class PowerGrid:
             Disconnected buildings are explicitly set to 0 efficiency. Callers
             should run this before reading tower or mine behavior.
         """
-        by_position = {building.position: building for building in buildings}
+        # Traverse occupied cells rather than anchors: touching rectangle
+        # edges conduct power even when their anchors are several units apart.
+        # Count supply/demand once per entity, regardless of footprint area.
+        by_position = {
+            cell: building
+            for building in buildings
+            for cell in building.occupied_cells()
+        }
         connected_positions = self._find_connected_positions(grid_map, by_position)
 
         connected_buildings = [
@@ -81,12 +88,12 @@ class PowerGrid:
         grid_map: GridMap,
         by_position: dict[Position, Building],
     ) -> set[Position]:
-        """Run four-way BFS from the core and return reachable positions.
+        """Run four-way BFS through occupied cells starting at the core.
 
         Empty coordinates stop the current branch. The method does not check
         map bounds because a neighbor is only queued when it exists in
-        `by_position`. If the core has no corresponding building, the result
-        is empty.
+        `by_position`. Shared edges conduct; diagonal-only contact does not.
+        Reaching any part of a rectangle also reaches its anchor.
         """
         connected: set[Position] = set()
         queue: deque[Position] = deque([grid_map.core_position])

@@ -43,7 +43,7 @@ from grid_td.buildings import (
 )
 from grid_td.enemies import Enemy
 from grid_td.map import GridMap
-from grid_td.position import Position
+from grid_td.position import DISTANCE_METRIC, Position, WorldPosition, world_distance
 from grid_td.power_grid import PowerGrid, PowerReport
 from grid_td.waves import WaveRunner, create_demo_waves
 
@@ -84,7 +84,7 @@ class BuildingSnapshot:
     kind: str  # Stable building key for GUI routing and icons.
     name: str  # Player-facing name.
     symbol: str  # Compact text/debug symbol.
-    position: Position  # Occupied grid cell.
+    position: Position  # Top-left occupied small cell.
     hp: int  # Current prototype health.
     max_hp: int  # Maximum prototype health.
     cost: int  # Build cost for this building type.
@@ -93,7 +93,10 @@ class BuildingSnapshot:
     connected_to_grid: bool  # Whether the latest power pass reached it.
     efficiency: float  # Latest work multiplier.
     needs_repair: bool  # Whether wave settlement should charge repair cost.
-    range: int | None = None  # Tower range; `None` for non-towers.
+    width: int
+    height: int
+    center: WorldPosition
+    range: float | None = None  # World-unit tower range; `None` for non-towers.
     damage: float | None = None  # Tower base damage; `None` for non-towers.
     cooldown_remaining: float | None = None  # Tower cooldown; `None` for non-towers.
     is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
@@ -104,14 +107,28 @@ class EnemySnapshot:
     """Read-only display contract for one active enemy."""
 
     name: str  # Enemy type name.
-    position: Position  # Current discrete route cell.
+    position: Position  # Small cell containing the continuous world position.
     hp: float  # Current health.
     max_hp: float  # Maximum health.
-    speed: float  # Base movement speed before slow effects.
+    speed: float  # Base world units per second before slow effects.
     damage_to_core: int  # Damage applied if this enemy reaches the core.
     reward: int  # Gold paid when defeated.
-    path_progress: float  # Continuous progress along the route.
+    path_progress: float  # World distance traveled along the route.
     is_slowed: bool  # Whether a slow effect is currently active.
+    world_position: WorldPosition  # Continuous position in small-cell units.
+
+
+@dataclass(frozen=True)
+class BuildPreview:
+    """Read-only placement result; build() always rechecks before spending."""
+
+    kind: str
+    position: Position
+    width: int
+    height: int
+    occupied_cells: tuple[Position, ...]
+    is_valid: bool
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -187,6 +204,8 @@ class GameSnapshot:
     height: int
     status: GameStatus
     board: tuple[tuple[CellSnapshot, ...], ...]
+    cell_size: float  # One world unit per small cell.
+    distance_metric: str
 
 
 BUILDING_KIND_BY_TYPE: tuple[tuple[type[Building], str], ...] = (
@@ -231,7 +250,10 @@ class GameState:
         self.next_building_id = 1
         self.result_message = ""
         self.latest_power_report = PowerReport(0, 0, 0, 1.0)
-        self._add_building(Core(self._next_id(), self.grid_map.core_position))
+        core = Core(self._next_id(), self.grid_map.core_position)
+        # Match the map's reservation, including custom core dimensions.
+        core.footprint = self.grid_map.core_footprint
+        self._add_building(core)
         self.recalculate_power()
 
     @property
@@ -278,6 +300,8 @@ class GameState:
             height=self.grid_map.height,
             status=self.status_snapshot(),
             board=self.board_snapshot(),
+            cell_size=1.0,
+            distance_metric=DISTANCE_METRIC,
         )
 
     def status_snapshot(self) -> GameStatus:
@@ -345,7 +369,7 @@ class GameState:
         Dynamic occupants are intentionally excluded and appear separately in
         `CellSnapshot.building` and `CellSnapshot.enemies`.
         """
-        if position == self.grid_map.core_position:
+        if self.grid_map.is_core(position):
             return "core"
         if self.grid_map.is_route(position):
             return "route"
@@ -374,6 +398,9 @@ class GameState:
             connected_to_grid=building.connected_to_grid,
             efficiency=building.efficiency,
             needs_repair=building.needs_repair,
+            width=building.width,
+            height=building.height,
+            center=building.center,
             range=tower.range if tower is not None else None,
             damage=tower.damage if tower is not None else None,
             cooldown_remaining=tower.cooldown_remaining if tower is not None else None,
@@ -394,7 +421,8 @@ class GameState:
             if not enemy.is_alive:
                 continue
 
-            position = enemy.position_on_route(self.grid_map.route)
+            world_position = enemy.world_position_on_route(self.grid_map.path)
+            position = world_position.cell
             grouped.setdefault(position, []).append(
                 EnemySnapshot(
                     name=enemy.name,
@@ -406,6 +434,7 @@ class GameState:
                     reward=enemy.reward,
                     path_progress=enemy.path_progress,
                     is_slowed=enemy.is_slowed,
+                    world_position=world_position,
                 )
             )
 
@@ -414,52 +443,81 @@ class GameState:
             for position, enemies in grouped.items()
         }
 
-    def build(self, kind: str, position: Position) -> Building:
-        """Build at a position and update gold and power-grid state.
+    def _build_candidate(self, kind: str, position: Position) -> Building:
+        """Create an uncommitted candidate without spending an entity ID.
 
-        Args:
-            kind: Building key supported by `create_building()`.
-            position: Target grid coordinate. Mines must use mine sites, and
-                other buildings cannot occupy mine sites.
-
-        Returns:
-            The newly created `Building` subclass instance.
-
-        Raises:
-            ValueError: The game has ended, the core is destroyed, or the
-                position is out of bounds or not buildable, occupied,
-                incompatible with mine-site rules, unknown by kind, or too
-                expensive. Rejected calls leave state unchanged.
-
-        Side effects:
-            Spends build cost, appends the building, and immediately
-            recalculates power. The current implementation allocates an ID
-            before checking gold, so failed insufficient-gold attempts still
-            consume an internal ID; callers should not rely on gapless IDs.
+        A type's FOOTPRINT determines its geometry. The anchor may be any
+        small cell; it need not align to the former three-cell tile spacing.
+        High-ground bonuses require the entire rectangle to be on high ground.
         """
-        # Terminal games must reject commands before validating placement or
-        # allocating an entity ID, so building cannot mutate a finished run.
+        if not isinstance(kind, str):
+            raise ValueError("Building kind must be a string.")
+        if not isinstance(position, Position):
+            raise ValueError("Building position must be a grid Position.")
+        building = create_building(kind, self.next_building_id, position)
+        if isinstance(building, Tower) and all(
+            self.grid_map.is_high_ground(cell) for cell in building.occupied_cells()
+        ):
+            building.range += building.HIGH_GROUND_BONUS
+        return building
+
+    def _validate_placement(self, kind: str, building: Building) -> None:
+        """Validate the full rectangle and command state before any mutation.
+
+        Both preview_build() and build() use this rule source. A preview is
+        advisory: build() rechecks current occupancy and gold to avoid relying
+        on a result that may be stale after another player command.
+        """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot build after the game has ended.")
-        if not self.grid_map.is_buildable(position):
-            raise ValueError(f"Position is not buildable: {position}")
-        if self.building_at(position) is not None:
-            raise ValueError(f"Position is already occupied: {position}")
-        if kind == "mine" and not self.grid_map.is_mine_site(position):
-            raise ValueError("Mines can only be built on mine sites.")
-        if kind != "mine" and self.grid_map.is_mine_site(position):
+        cells = building.occupied_cells()
+        for cell in cells:
+            if not self.grid_map.is_buildable(cell):
+                raise ValueError(f"Position is not buildable: {cell}")
+            if self.building_at(cell) is not None:
+                raise ValueError(f"Position is already occupied: {cell}")
+        if kind == "mine" and not all(self.grid_map.is_mine_site(cell) for cell in cells):
+            raise ValueError("Mines must fit entirely within mine sites.")
+        if kind != "mine" and any(self.grid_map.is_mine_site(cell) for cell in cells):
             raise ValueError("Only mines can be built on mine sites.")
-
-        building = create_building(
-            kind=kind,
-            building_id=self._next_id(),
-            position=position,
-            high_ground=self.grid_map.is_high_ground(position),
-        )
-
         if self.gold < building.cost:
             raise ValueError(f"Not enough gold. Need {building.cost}, have {self.gold}.")
 
+    def preview_build(self, kind: str, position: Position) -> BuildPreview:
+        """Return footprint cells, validity and a rejection reason, without mutation.
+
+        Illegal placement, insufficient gold and terminal games return an
+        invalid preview. Unknown kinds or malformed arguments raise ValueError
+        because no valid candidate geometry can be determined. Successful
+        previews use an empty reason. The returned value is immutable.
+        """
+        building = self._build_candidate(kind, position)
+        reason = ""
+        try:
+            self._validate_placement(kind, building)
+        except ValueError as exc:
+            reason = str(exc)
+        return BuildPreview(
+            kind=kind, position=position, width=building.width, height=building.height,
+            occupied_cells=building.occupied_cells(), is_valid=not reason, reason=reason,
+        )
+
+    def build(self, kind: str, position: Position) -> Building:
+        """Place a building using a top-left small-cell anchor.
+
+        The whole footprint must be in bounds, unoccupied and outside roads,
+        blocked ground and the core reservation. Mines must fit entirely in
+        mine terrain; other buildings cannot overlap it. A tower receives the
+        high-ground range bonus only when its entire footprint is on high ground.
+
+        Raises ValueError for invalid kinds/positions, illegal placement,
+        insufficient gold or a terminal game. Rejection and previewing never
+        spend gold, allocate IDs or alter power. Success spends the cost,
+        allocates one ID, adds the entity and refreshes power immediately.
+        """
+        building = self._build_candidate(kind, position)
+        self._validate_placement(kind, building)
+        self._next_id()
         self.gold -= building.cost
         self._add_building(building)
         self.recalculate_power()
@@ -722,11 +780,11 @@ class GameState:
     def building_at(self, position: Position) -> Building | None:
         """Return the first building at a coordinate, or `None` if empty.
 
-        The current implementation is a linear scan. The build entry point
-        guarantees normal gameplay has no duplicate positions.
+        Any occupied small cell resolves to the same building, including
+        cells other than its top-left anchor. Legal buildings never overlap.
         """
         for building in self.buildings:
-            if building.position == position:
+            if building.occupies(position):
                 return building
         return None
 
@@ -789,29 +847,28 @@ class GameState:
         self.enemies = [enemy for enemy in self.enemies if enemy.is_alive]
 
     def _select_target(self, tower: Tower) -> Enemy | None:
-        """Select the in-range enemy with the highest route progress.
+        """Select the furthest-progressing living enemy within world-unit range.
 
-        Range uses Manhattan distance between the tower coordinate and the
-        enemy's current discrete route cell. Ties by progress have no extra
-        ordering guarantee. This default policy matches the design intent of
-        prioritizing enemies closest to the core.
+        Range starts at the building's geometric center and ends at the
+        enemy's continuous centerline position. world_distance() is the single
+        combat-metric boundary; changing it does not change grid adjacency or
+        path traversal. Dead enemies await reward cleanup but cannot absorb
+        another tower's attack during this same simulation step.
         """
         targets = [
-            enemy
-            for enemy in self.enemies
-            if tower.position.manhattan_distance(enemy.position_on_route(self.grid_map.route))
-            <= tower.range
+            enemy for enemy in self.enemies
+            if enemy.is_alive and world_distance(
+                tower.center, enemy.world_position_on_route(self.grid_map.path)
+            ) <= tower.range
         ]
-        if not targets:
-            return None
-        return max(targets, key=lambda enemy: enemy.path_progress)
+        return max(targets, key=lambda enemy: enemy.path_progress, default=None)
 
     def _advance_enemies(self, seconds: float) -> None:
         """Advance enemies and convert route-end arrivals into core damage."""
         escaped: list[Enemy] = []
         for enemy in self.enemies:
             enemy.advance(seconds)
-            if enemy.has_reached_core(self.grid_map.route):
+            if enemy.has_reached_core(self.grid_map.path):
                 escaped.append(enemy)
 
         for enemy in escaped:

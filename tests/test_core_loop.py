@@ -31,8 +31,8 @@ class CoreLoopTest(unittest.TestCase):
         """A plant and adjacent tower should connect and get positive efficiency."""
         game = GameState(create_demo_map())
 
-        game.build("power_plant", Position(10, 2))
-        tower = game.build("gun_tower", Position(10, 3))
+        game.build("power_plant", Position(30, 6))
+        tower = game.build("gun_tower", Position(30, 9))
 
         self.assertTrue(tower.connected_to_grid)
         self.assertGreater(tower.efficiency, 0)
@@ -41,7 +41,7 @@ class CoreLoopTest(unittest.TestCase):
         """A building outside the adjacent grid should render as unpowered."""
         game = GameState(create_demo_map())
 
-        tower = game.build("gun_tower", Position(0, 1))
+        tower = game.build("gun_tower", Position(0, 3))
 
         self.assertFalse(tower.connected_to_grid)
         self.assertEqual(tower.efficiency, 0.0)
@@ -51,9 +51,9 @@ class CoreLoopTest(unittest.TestCase):
         """Connected demand above supply should lower shared efficiency."""
         game = GameState(create_demo_map())
 
-        game.build("gun_tower", Position(10, 2))
-        game.build("slow_tower", Position(10, 3))
-        cannon = game.build("cannon_tower", Position(10, 4))
+        game.build("gun_tower", Position(30, 6))
+        game.build("slow_tower", Position(30, 9))
+        cannon = game.build("cannon_tower", Position(30, 12))
 
         report = game.latest_power_report
         self.assertEqual(report.total_supply, 10)
@@ -65,9 +65,9 @@ class CoreLoopTest(unittest.TestCase):
         """Building a tower on high ground should apply the range bonus."""
         game = GameState(create_demo_map())
 
-        tower = game.build("gun_tower", Position(4, 2))
+        tower = game.build("gun_tower", Position(12, 6))
 
-        self.assertEqual(tower.range, 3)
+        self.assertEqual(tower.range, 9)
 
     def test_core_overdraft_adds_gold_and_debt(self) -> None:
         """Core overdraft should add both gold and debt."""
@@ -81,20 +81,20 @@ class CoreLoopTest(unittest.TestCase):
 
     def test_demolish_tower_updates_power_and_does_not_refund(self) -> None:
         game = GameState(create_demo_map())
-        game.build("power_plant", Position(10, 2))
-        tower = game.build("gun_tower", Position(10, 3))
+        game.build("power_plant", Position(30, 6))
+        tower = game.build("gun_tower", Position(30, 9))
         gold_before = game.gold
 
         removed = game.demolish_tower(tower.id)
 
         self.assertIs(removed, tower)
-        self.assertIsNone(game.building_at(Position(10, 3)))
+        self.assertIsNone(game.building_at(Position(30, 9)))
         self.assertEqual(game.latest_power_report.total_demand, 0)
         self.assertEqual(game.gold, gold_before)
         with self.assertRaises(ValueError):
             game.demolish_tower(tower.id)
         with self.assertRaises(ValueError):
-            game.demolish_tower(game.building_at(Position(10, 1)).id)
+            game.demolish_tower(game.building_at(Position(30, 3)).id)
             
     def test_buy_wave_intel_spends_gold_and_requires_gold(self) -> None:
         """Buying intel should expose the briefing and enforce its price."""
@@ -112,8 +112,8 @@ class CoreLoopTest(unittest.TestCase):
     def test_overload_tower_marks_repair_and_adds_debt(self) -> None:
         """Tower overload should create the later repair/debt consequences."""
         game = GameState(create_demo_map())
-        game.build("power_plant", Position(10, 2))
-        tower = game.build("gun_tower", Position(10, 3))
+        game.build("power_plant", Position(30, 6))
+        tower = game.build("gun_tower", Position(30, 9))
 
         game.overload_tower(tower.id)
 
@@ -133,10 +133,10 @@ class CoreLoopTest(unittest.TestCase):
 
         invalid_cases = (
             ("blocked terrain", "gun_tower", Position(0, 0)),
-            ("enemy route", "gun_tower", Position(0, 4)),
-            ("core position", "gun_tower", Position(10, 1)),
-            ("mine outside mine site", "mine", Position(0, 1)),
-            ("non-mine on mine site", "gun_tower", Position(2, 1)),
+            ("enemy route", "gun_tower", Position(0, 12)),
+            ("core position", "gun_tower", Position(30, 3)),
+            ("mine outside mine site", "mine", Position(0, 3)),
+            ("non-mine on mine site", "gun_tower", Position(6, 3)),
         )
 
         for label, kind, position in invalid_cases:
@@ -144,7 +144,7 @@ class CoreLoopTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     game.build(kind, position)
 
-        occupied_position = Position(10, 2)
+        occupied_position = Position(30, 6)
         game.build("power_plant", occupied_position)
 
         with self.subTest(label="occupied position"):
@@ -156,9 +156,9 @@ class CoreLoopTest(unittest.TestCase):
         game = GameState(create_demo_map(), gold=0)
 
         with self.assertRaises(ValueError):
-            game.build("gun_tower", Position(0, 1))
+            game.build("gun_tower", Position(0, 3))
 
-        self.assertIsNone(game.building_at(Position(0, 1)))
+        self.assertIsNone(game.building_at(Position(0, 3)))
 
     def test_text_renderer_shows_illegal_ground(self) -> None:
         """Text rendering should expose blocked terrain for debugging and parity with GUI."""
@@ -166,7 +166,7 @@ class CoreLoopTest(unittest.TestCase):
         rendered = TextRenderer().render(game)
         first_map_row = rendered.splitlines()[1]
 
-        self.assertEqual(first_map_row, "##...##.....")
+        self.assertEqual(first_map_row, "######.........######...............")
 
     def test_status_snapshot_exposes_gui_state(self) -> None:
         """The status snapshot should cover top-bar state without mutable entities."""
@@ -201,8 +201,8 @@ class CoreLoopTest(unittest.TestCase):
         self.assertIsNone(illegal_cell.building)
         self.assertEqual(illegal_cell.display_symbol, "#")
 
-        game.build("power_plant", Position(10, 2))
-        building_cell = game.cell_snapshot(Position(10, 2))
+        game.build("power_plant", Position(30, 6))
+        building_cell = game.cell_snapshot(Position(30, 6))
 
         self.assertEqual(building_cell.terrain, "empty")
         self.assertFalse(building_cell.is_buildable)
@@ -213,7 +213,7 @@ class CoreLoopTest(unittest.TestCase):
 
         game.start_next_wave()
         game.step(0.0)
-        route_cell = game.cell_snapshot(Position(0, 4))
+        route_cell = game.cell_snapshot(Position(1, 13))
 
         self.assertEqual(route_cell.terrain, "route")
         self.assertTrue(route_cell.has_enemy)
@@ -227,10 +227,10 @@ class CoreLoopTest(unittest.TestCase):
 
         snapshot = game.snapshot()
 
-        self.assertEqual(snapshot.width, 12)
-        self.assertEqual(snapshot.height, 7)
-        self.assertEqual(len(snapshot.board), 7)
-        self.assertTrue(all(len(row) == 12 for row in snapshot.board))
+        self.assertEqual(snapshot.width, 36)
+        self.assertEqual(snapshot.height, 21)
+        self.assertEqual(len(snapshot.board), 21)
+        self.assertTrue(all(len(row) == 36 for row in snapshot.board))
         self.assertIsInstance(snapshot.board, tuple)
         self.assertIsInstance(snapshot.board[0], tuple)
         self.assertEqual(snapshot.board[0][0].terrain, "illegal")
@@ -242,13 +242,15 @@ class CoreLoopTest(unittest.TestCase):
         game = GameState(create_demo_map())
 
         with self.assertRaises(ValueError):
-            game.cell_snapshot(Position(-1, 0))
+            game.cell_snapshot(Position(-3, 0))
 
     def test_text_renderer_uses_snapshot_contract_only(self) -> None:
         """Text rendering should not depend on GameState's mutable attributes."""
         snapshot = GameSnapshot(
             width=2,
             height=1,
+            cell_size=1.0,
+            distance_metric="manhattan",
             status=GameStatus(
                 phase=GamePhase.NIGHT,
                 gold=1,
@@ -375,8 +377,8 @@ class CoreLoopTest(unittest.TestCase):
     def test_demo_wave_can_advance_without_crashing(self) -> None:
         """The default map and basic defense should run for multiple steps."""
         game = GameState(create_demo_map())
-        game.build("power_plant", Position(10, 2))
-        game.build("gun_tower", Position(10, 3))
+        game.build("power_plant", Position(30, 6))
+        game.build("gun_tower", Position(30, 9))
 
         game.start_next_wave()
         for _ in range(20):
