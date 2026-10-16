@@ -114,7 +114,7 @@ class MenuView:
         self._text("前线演示", (237, 264), self.heading_font, TEXT)
         self._text("已解锁  /  固定地图", (240, 316), self.small_font, GOLD)
         pygame.draw.line(self.screen, BORDER, (237, 356), (944, 356), 1)
-        self._text("12 × 7 网格     单一路线     电网与塔防", (240, 382), self.body_font, MUTED)
+        self._text("36 × 21 小格     单一路线     电网与塔防", (240, 382), self.body_font, MUTED)
         self._button(self.buttons["levels"]["play"], "开始关卡   →", mouse_pos)
         self._button(self.buttons["levels"]["back"], "←  返回", mouse_pos, secondary=True)
 
