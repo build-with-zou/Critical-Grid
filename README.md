@@ -20,7 +20,7 @@ main.py
   -> TextRenderer                 text projection of the snapshot contract
 ```
 
-`GameState.step(seconds)` is the simulation boundary. Each step spawns due
+`GameState.step(seconds)` is the simulation boundary. Each NIGHT step spawns due
 enemies, recalculates power, lets connected towers attack, then advances
 enemies toward the core. Wave settlement is separate: `end_wave()` applies
 mine income, debt interest, and repair costs, while `start_next_wave()` creates
@@ -53,29 +53,52 @@ Recommended reading order:
 
 ## Wave Lifecycle
 
-The first wave runner is created automatically by `GameState(...)`. After each
-step, use the snapshot to check whether the wave can be settled:
+New games start in `GamePhase.DAY` with no wave runner. The player can build
+and buy intel while all simulation clocks remain frozen. The lifecycle is
+`DAY -> NIGHT -> DAY`, followed by `VICTORY` after the final settlement or
+`DEFEAT` when core health reaches zero. Pause remains a frontend time control,
+not a replacement phase.
+
+```python
+from grid_td.game_state import GamePhase, GameState
+from grid_td.map import create_demo_map
+
+game = GameState(create_demo_map())  # Planning day; no enemies spawn.
+# On the player's Start Night action (including the first night):
+game.start_next_wave()
+```
+
+During combat, use the snapshot to check whether the night can be settled:
 
 ```python
 if game.snapshot().status.waiting_for_next_wave:
     message = game.end_wave()
-    if not game.snapshot().status.is_finished:
-        game.start_next_wave()
+    # Return to planning. Wait for another Start Night action.
 ```
 
-- `waiting_for_next_wave` is true only while the game is unfinished, the core
-  is alive, spawning is complete, and no enemies remain.
+- `snapshot().status.phase` exposes `GamePhase.DAY`, `NIGHT`, `VICTORY`, or
+  `DEFEAT`; their string values are `day`, `night`, `victory`, and `defeat`.
+  `GameStatus` constructors now require this field. During DAY, `wave_index`
+  and `current_wave_name` describe the upcoming night; NIGHT uses the same index.
+- `waiting_for_next_wave` is true only during NIGHT while the game is
+  unfinished, the core is alive, spawning is complete, and no enemies remain.
 - `end_wave()` returns a settlement string. It pays mine income, charges
   interest and repairs, clears repair markers, advances the wave index, and
-  removes the runner exactly once. Settling the final wave records victory.
-- `start_next_wave()` returns `None` and creates the next runner only after
-  settlement. It cannot restart an active or cleared-but-unsettled wave.
+  removes the runner exactly once. Settlement enters DAY, except that the final
+  wave records VICTORY directly without another planning day.
+- `start_next_wave()` returns `None` and creates a runner only during DAY,
+  including the first day. It enters NIGHT without advancing the wave index
+  or clocks. It cannot restart an active or cleared-but-unsettled wave.
 - Both commands raise `ValueError` for invalid transitions, including calls
   after victory or defeat, and leave state unchanged on rejection. Defeat is
   recorded by `step()` and is not followed by wave settlement.
 
-The normal text/GUI call sequence is unchanged. Frontends that expose these
-commands directly should catch `ValueError` and display its message.
+GUI migration is required: initialize in DAY, offer a Start Night action,
+and remove immediate next-wave startup after settlement. Keep Run/Pause
+separate from starting a night. The existing `gui/` is not yet migrated and
+will remain in DAY until it calls `start_next_wave()`; its previous automatic
+startup after settlement would skip planning. This change only updates the
+core and text demo. Frontends should catch `ValueError` for rejected commands.
 
 Build and intel commands also reject a destroyed core or ended game without
 changing state. `buy_wave_intel()` checks wave availability before charging:
@@ -85,16 +108,19 @@ for free.
 ## Simulation Clock
 
 `GameState` owns the authoritative logical clock. Each call to
-`game.step(seconds)` advances that same finite, non-negative delta through the
-wave scheduler, tower cooldowns, overload timers, enemy movement, and
+`game.step(seconds)` during NIGHT advances that same finite, non-negative delta
+through the wave scheduler, tower cooldowns, overload timers, enemy movement, and
 `elapsed_seconds`. A fixed-step caller can use `0.05` seconds for 20 logical
 updates per second; the core does not start its own timer or event loop.
+DAY freezes elapsed time, spawning, cooldowns, overload timers, and movement;
+valid steps do nothing. `elapsed_seconds` accumulates combat time across all
+nights, while each new wave runner starts its local spawn clock at zero.
 
 `elapsed_seconds` is a float so fractional steps accumulate without integer
-rounding. `step(0)` remains valid and processes events scheduled at
-logical time zero. Invalid durations, including negative, non-finite, boolean,
-string, and unrepresentably large values, raise `ValueError` without changing
-state.
+rounding. During NIGHT, `step(0)` remains valid and processes events scheduled at
+logical time zero. Invalid durations are rejected in every phase, including
+DAY and terminal phases. Negative, non-finite, boolean, string, and
+unrepresentably large values raise `ValueError` without changing state.
 
 ## Emergency Commands
 
