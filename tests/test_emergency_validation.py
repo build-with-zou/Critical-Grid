@@ -11,7 +11,7 @@ from grid_td.position import Position
 class EmergencyValidationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.game = GameState(create_demo_map())
-        self.tower = self.game.build("gun_tower", Position(10, 2))
+        self.tower = self.game.build("gun_tower", Position(30, 6))
 
     def assert_rejected_without_changes(self, operation: Callable[[], object]) -> None:
         before = self.game.snapshot()
@@ -90,8 +90,8 @@ class EmergencyValidationTest(unittest.TestCase):
                 )
 
     def test_invalid_tower_id_does_not_change_state(self) -> None:
-        node = self.game.build("power_node", Position(10, 3))
-        core_id = self.game.cell_snapshot(Position(10, 1)).building.id
+        node = self.game.build("power_node", Position(30, 9))
+        core_id = self.game.cell_snapshot(Position(30, 3)).building.id
         invalid_ids = (0, -1, 999, core_id, node.id, float(self.tower.id),
                        True, False, str(self.tower.id), None)
         for building_id in invalid_ids:

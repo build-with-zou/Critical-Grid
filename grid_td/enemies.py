@@ -97,10 +97,10 @@ def create_enemy(kind: str) -> Enemy:
         ValueError: Unknown enemy type.
     """
     templates = {
-        "basic": Enemy("Basic", max_hp=10, speed=0.75, damage_to_core=1, reward=4),
-        "fast": Enemy("Fast", max_hp=7, speed=1.25, damage_to_core=1, reward=5),
-        "armored": Enemy("Armored", max_hp=24, speed=0.45, damage_to_core=2, reward=8),
-        "saboteur": Enemy("Saboteur", max_hp=14, speed=0.85, damage_to_core=2, reward=7),
+        "basic": Enemy("Basic", max_hp=10, speed=0.75 * LEGACY_TILE_SIZE, damage_to_core=1, reward=4),
+        "fast": Enemy("Fast", max_hp=7, speed=1.25 * LEGACY_TILE_SIZE, damage_to_core=1, reward=5),
+        "armored": Enemy("Armored", max_hp=24, speed=0.45 * LEGACY_TILE_SIZE, damage_to_core=2, reward=8),
+        "saboteur": Enemy("Saboteur", max_hp=14, speed=0.85 * LEGACY_TILE_SIZE, damage_to_core=2, reward=7),
     }
 
     try:

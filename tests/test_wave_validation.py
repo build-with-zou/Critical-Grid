@@ -55,12 +55,12 @@ class WaveValidationTest(unittest.TestCase):
 
     def test_settlement_pays_income_interest_and_repairs_only_once(self) -> None:
         game = self.game
-        tower = game.build("gun_tower", Position(10, 2))
-        game.build("power_node", Position(10, 3))
-        game.build("power_node", Position(10, 4))
-        game.build("power_node", Position(10, 5))
-        game.build("power_node", Position(9, 5))
-        game.build("mine", Position(8, 5))
+        tower = game.build("gun_tower", Position(30, 6))
+        game.build("power_node", Position(30, 9))
+        game.build("power_node", Position(30, 12))
+        game.build("power_node", Position(30, 15))
+        game.build("power_node", Position(27, 15))
+        game.build("mine", Position(24, 15))
         game.core_overdraft()
         game.overload_tower(tower.id)
         game.step(30.0)

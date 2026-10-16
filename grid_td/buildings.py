@@ -45,7 +45,7 @@ class Building:
 
     # Each concrete type declares its own size. Change that type's FOOTPRINT
     # when introducing different dimensions; placement/power use it directly.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
 
     def __post_init__(self) -> None:
         self.footprint = self.FOOTPRINT
@@ -101,7 +101,7 @@ class Core(Building):
     """Failure target on the map, base power source, and grid root."""
 
     SYMBOL: ClassVar[str] = "C"  # Map character used by TextRenderer.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
 
     def __init__(self, building_id: int, position: Position) -> None:
         """Create the zero-cost core with fixed health and base power."""
@@ -123,7 +123,7 @@ class Mine(Building):
     """Economy building restricted to mine sites and settled per wave."""
 
     SYMBOL: ClassVar[str] = "M"  # Map character used by TextRenderer.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
     income: int = 12  # Base settlement income at 100% powered efficiency.
 
     def __init__(self, building_id: int, position: Position) -> None:
@@ -149,7 +149,7 @@ class PowerPlant(Building):
     """Power source that adds supply after connecting to the core grid."""
 
     SYMBOL: ClassVar[str] = "P"  # Map character used by TextRenderer.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
 
     def __init__(self, building_id: int, position: Position) -> None:
         """Create a power plant that provides 10 supply when connected."""
@@ -169,7 +169,7 @@ class PowerNode(Building):
     """Network relay that transmits power without adding supply."""
 
     SYMBOL: ClassVar[str] = "N"  # Map character used by TextRenderer.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
 
     def __init__(self, building_id: int, position: Position) -> None:
         """Create a node that extends adjacent-grid connectivity only."""
@@ -194,9 +194,9 @@ class Tower(Building):
     maintains timers.
     """
 
-    HIGH_GROUND_BONUS: ClassVar[float] = 1.0
+    HIGH_GROUND_BONUS: ClassVar[float] = float(LEGACY_TILE_SIZE)
 
-    range: float = 2.0  # World units; measured from the building center.
+    range: float = 6.0  # World units; measured from the building center.
     damage: float = 1.0  # Base hit damage before efficiency and overload.
     cooldown_seconds: float = 1.0  # Base attack interval at 100% speed.
     cooldown_remaining: float = 0.0  # Logical seconds until the next attack.
@@ -244,10 +244,10 @@ class GunTower(Tower):
     """Low-cost single-target tower with a relatively high fire rate."""
 
     SYMBOL: ClassVar[str] = "G"  # Map character used by TextRenderer.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
 
     def __init__(self, building_id: int, position: Position, high_ground: bool = False) -> None:
-        """Create a fast tower with range 2, or 3 on full high ground."""
+        """Create a fast tower with range 6, or 9 on full high ground."""
         super().__init__(
             id=building_id,
             name="Gun Tower",
@@ -255,7 +255,7 @@ class GunTower(Tower):
             cost=30,
             max_hp=8,
             power_draw=3,
-            range=2 + (self.HIGH_GROUND_BONUS if high_ground else 0),
+            range=2 * LEGACY_TILE_SIZE + (self.HIGH_GROUND_BONUS if high_ground else 0),
             damage=4.0,
             cooldown_seconds=1.0,
         )
@@ -270,7 +270,7 @@ class CannonTower(Tower):
     """
 
     SYMBOL: ClassVar[str] = "A"  # Map character used by TextRenderer.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
 
     def __init__(self, building_id: int, position: Position, high_ground: bool = False) -> None:
         """Create a slow high-damage tower; currently still single-target."""
@@ -281,7 +281,7 @@ class CannonTower(Tower):
             cost=45,
             max_hp=8,
             power_draw=5,
-            range=2 + (self.HIGH_GROUND_BONUS if high_ground else 0),
+            range=2 * LEGACY_TILE_SIZE + (self.HIGH_GROUND_BONUS if high_ground else 0),
             damage=8.0,
             cooldown_seconds=2.0,
         )
@@ -292,7 +292,7 @@ class SlowTower(Tower):
     """Control tower that deals light damage and applies slow via state logic."""
 
     SYMBOL: ClassVar[str] = "S"  # Map character used by TextRenderer.
-    FOOTPRINT: ClassVar[Footprint] = Footprint(1, 1)
+    FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
 
     def __init__(self, building_id: int, position: Position, high_ground: bool = False) -> None:
         """Create a control tower that applies damage plus a fixed 2-second slow."""
@@ -303,7 +303,7 @@ class SlowTower(Tower):
             cost=35,
             max_hp=8,
             power_draw=4,
-            range=2 + (self.HIGH_GROUND_BONUS if high_ground else 0),
+            range=2 * LEGACY_TILE_SIZE + (self.HIGH_GROUND_BONUS if high_ground else 0),
             damage=1.0,
             cooldown_seconds=1.5,
         )

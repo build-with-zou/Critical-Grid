@@ -40,7 +40,7 @@ class GridMap:
     high_ground_positions: frozenset[Position]  # Cells that grant tower range.
     illegal_ground_positions: frozenset[Position]  # Static blocked cells.
     road_cells: frozenset[Position] | None = None
-    core_footprint: Footprint = Footprint(1, 1)
+    core_footprint: Footprint = Footprint(3, 3)
 
     def __post_init__(self) -> None:
         """Reject geometry that would place runtime entities outside the map."""
@@ -130,7 +130,7 @@ def create_demo_map() -> GridMap:
     """Create the fixed demo map shared by the entry script and tests.
 
     Returns:
-        An immutable 12-column, 7-row map with a route that runs horizontally
+        An immutable 36-column, 21-row map with a route that runs horizontally
         and then turns upward, plus two mine sites and two high-ground cells.
         Changing this also changes the spatial assumptions of the demo, tests,
         and default waves, so check build coordinates and tower ranges too.
@@ -151,25 +151,30 @@ def create_demo_map() -> GridMap:
         Position(9, 1),
     )
 
+    def expand(cells: Iterable[Position]) -> frozenset[Position]:
+        """Expand terrain area while keeping the original physical layout."""
+        tile = Footprint(LEGACY_TILE_SIZE, LEGACY_TILE_SIZE)
+        return frozenset(
+            cell
+            for old in cells
+            for cell in tile.cells(Position(old.x * LEGACY_TILE_SIZE, old.y * LEGACY_TILE_SIZE))
+        )
+
     return GridMap(
-        width=12,
-        height=7,
-        route=route,
-        core_position=Position(10, 1),
-        mine_positions=frozenset(
-            {
-                Position(2, 1),
-                Position(8, 5),
-            }
+        width=12 * LEGACY_TILE_SIZE,
+        height=7 * LEGACY_TILE_SIZE,
+        # The middle small cell of each former tile preserves the original
+        # centerline. Sparse waypoints keep its length at 12 * 3 = 36 units.
+        route=tuple(
+            Position(p.x * LEGACY_TILE_SIZE + 1, p.y * LEGACY_TILE_SIZE + 1)
+            for p in route
         ),
-        high_ground_positions=frozenset(
-            {
-                Position(4, 2),
-                Position(7, 2),
-            }
-        ),
-        illegal_ground_positions=frozenset(
-            {
+        road_cells=expand(route),
+        core_position=Position(10 * LEGACY_TILE_SIZE, LEGACY_TILE_SIZE),
+        mine_positions=expand((Position(2, 1), Position(8, 5))),
+        high_ground_positions=expand((Position(4, 2), Position(7, 2))),
+        illegal_ground_positions=expand(
+            (
                 Position(0, 0),
                 Position(1, 0),
                 Position(5, 0),
@@ -178,7 +183,7 @@ def create_demo_map() -> GridMap:
                 Position(11, 3),
                 Position(4, 6),
                 Position(5, 6),
-            }
+            )
         ),
     )
 

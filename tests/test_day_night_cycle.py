@@ -53,7 +53,7 @@ class DayNightCycleTest(unittest.TestCase):
         self.assertIn("Phase=day", TextRenderer().render(self.game))
 
     def test_day_freezes_clock_and_tower_timers(self) -> None:
-        tower = self.game.build("gun_tower", Position(10, 2))
+        tower = self.game.build("gun_tower", Position(30, 6))
         tower.cooldown_remaining = 0.75  # Seed a pending cooldown for this fixture.
         self.game.overload_tower(tower.id, 5.25)
         before = self.game.snapshot()
@@ -69,7 +69,7 @@ class DayNightCycleTest(unittest.TestCase):
     def test_planning_still_allows_building_and_intel(self) -> None:
         gold_before = self.game.gold
 
-        tower = self.game.build("gun_tower", Position(10, 2))
+        tower = self.game.build("gun_tower", Position(30, 6))
         briefing = self.game.buy_wave_intel()
 
         self.assertEqual(self.game.phase, GamePhase.DAY)
@@ -103,7 +103,7 @@ class DayNightCycleTest(unittest.TestCase):
         self.game.start_next_wave()
         gold_before = self.game.gold
 
-        tower = self.game.build("gun_tower", Position(10, 2))
+        tower = self.game.build("gun_tower", Position(30, 6))
         self.assertEqual(self.game.buy_wave_intel(), "Basic enemies.")
 
         self.assertEqual(self.game.phase, GamePhase.NIGHT)
@@ -112,7 +112,7 @@ class DayNightCycleTest(unittest.TestCase):
     def test_night_advances_cooldown_and_overload_with_shared_delta(self) -> None:
         # This connected tower is out of range of the entrance, so its timer
         # changes can be observed without an attack resetting the cooldown.
-        tower = self.game.build("gun_tower", Position(10, 2))
+        tower = self.game.build("gun_tower", Position(30, 6))
         tower.cooldown_remaining = 0.5
         self.game.overload_tower(tower.id, 5.0)
         self.game.start_next_wave()
@@ -123,7 +123,7 @@ class DayNightCycleTest(unittest.TestCase):
         self.assertAlmostEqual(self.game.wave_runner.elapsed_seconds, 0.05)
         self.assertAlmostEqual(tower.overload_seconds_remaining, 4.95)
         self.assertAlmostEqual(tower.cooldown_remaining, 0.45)
-        self.assertAlmostEqual(self.game.enemies[0].path_progress, 0.75 * 0.05)
+        self.assertAlmostEqual(self.game.enemies[0].path_progress, 2.25 * 0.05)
 
     def test_day_cannot_settle_a_wave(self) -> None:
         self.assert_rejected_without_changes(self.game.end_wave)
@@ -134,7 +134,7 @@ class DayNightCycleTest(unittest.TestCase):
         self.assertEqual(self.game.phase, GamePhase.NIGHT)
 
         self.game.end_wave()
-        tower = self.game.build("gun_tower", Position(10, 2))
+        tower = self.game.build("gun_tower", Position(30, 6))
         self.game.overload_tower(tower.id, 4.0)
         before = self.game.snapshot()
 

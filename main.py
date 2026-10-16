@@ -31,12 +31,13 @@ def build_demo_defense(game: GameState) -> None:
         recalculates the power grid. The coordinates and building kinds are
         part of the demo script, not a general build recommendation.
     """
-    game.build("power_plant", Position(10, 2))
-    game.build("gun_tower", Position(10, 3))
-    game.build("slow_tower", Position(10, 4))
-    game.build("power_node", Position(10, 5))
-    game.build("power_node", Position(9, 5))
-    game.build("mine", Position(8, 5))
+    # Anchors use small cells; each former demo coordinate is multiplied by 3.
+    game.build("power_plant", Position(30, 6))
+    game.build("gun_tower", Position(30, 9))
+    game.build("slow_tower", Position(30, 12))
+    game.build("power_node", Position(30, 15))
+    game.build("power_node", Position(27, 15))
+    game.build("mine", Position(24, 15))
 
 
 def main() -> None:

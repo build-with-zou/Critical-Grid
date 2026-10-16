@@ -17,11 +17,11 @@ class BuildAndIntelValidationTest(unittest.TestCase):
         next_id_before = self.game.next_building_id
 
         with self.assertRaises(ValueError):
-            self.game.build("gun_tower", Position(0, 1))
+            self.game.build("gun_tower", Position(0, 3))
 
         self.assertEqual(self.game.snapshot(), before)
         self.assertEqual(self.game.next_building_id, next_id_before)
-        self.assertIsNone(self.game.building_at(Position(0, 1)))
+        self.assertIsNone(self.game.building_at(Position(0, 3)))
 
     def test_build_rejects_destroyed_core_without_mutating_state(self) -> None:
         self.game.core_hp = 0
@@ -29,7 +29,7 @@ class BuildAndIntelValidationTest(unittest.TestCase):
         next_id_before = self.game.next_building_id
 
         with self.assertRaises(ValueError):
-            self.game.build("gun_tower", Position(0, 1))
+            self.game.build("gun_tower", Position(0, 3))
 
         self.assertEqual(self.game.snapshot(), before)
         self.assertEqual(self.game.next_building_id, next_id_before)
