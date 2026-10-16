@@ -36,6 +36,7 @@ class TextRenderer:
         # fixed-step simulations such as 0.05-second updates.
         elapsed = f"{status.elapsed_seconds:g}"
         header = (
+            f"Phase={status.phase.value} "
             f"Wave={status.current_wave_name} "
             f"Time={elapsed}s "
             f"Gold={status.gold} "
