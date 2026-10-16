@@ -3,7 +3,7 @@
 import unittest
 from collections.abc import Callable
 
-from grid_td.game_state import GameState
+from grid_td.game_state import GamePhase, GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 
@@ -11,6 +11,7 @@ from grid_td.position import Position
 class WaveValidationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.game = GameState(create_demo_map())
+        self.game.start_next_wave()
 
     def assert_rejected_without_changes(self, operation: Callable[[], object]) -> None:
         """A rejected command must preserve display and scheduler state."""
@@ -45,6 +46,7 @@ class WaveValidationTest(unittest.TestCase):
         for label, seconds in (("initial", 0.0), ("active", 1.0), ("cleared", 30.0)):
             with self.subTest(state=label):
                 self.game = GameState(create_demo_map())
+                self.game.start_next_wave()
                 if seconds:
                     self.game.step(seconds)
                 if label == "cleared":
@@ -53,12 +55,12 @@ class WaveValidationTest(unittest.TestCase):
 
     def test_settlement_pays_income_interest_and_repairs_only_once(self) -> None:
         game = self.game
-        tower = game.build("gun_tower", Position(10, 2))
-        game.build("power_node", Position(10, 3))
-        game.build("power_node", Position(10, 4))
-        game.build("power_node", Position(10, 5))
-        game.build("power_node", Position(9, 5))
-        game.build("mine", Position(8, 5))
+        tower = game.build("gun_tower", Position(30, 6))
+        game.build("power_node", Position(30, 9))
+        game.build("power_node", Position(30, 12))
+        game.build("power_node", Position(30, 15))
+        game.build("power_node", Position(27, 15))
+        game.build("mine", Position(24, 15))
         game.core_overdraft()
         game.overload_tower(tower.id)
         game.step(30.0)
@@ -81,7 +83,13 @@ class WaveValidationTest(unittest.TestCase):
         before_start = game.snapshot()
         game.start_next_wave()
 
-        self.assertEqual(game.snapshot(), before_start)
+        after_start = game.snapshot()
+        self.assertEqual(before_start.status.phase, GamePhase.DAY)
+        self.assertEqual(after_start.status.phase, GamePhase.NIGHT)
+        self.assertEqual(after_start.board, before_start.board)
+        self.assertEqual(after_start.status.gold, before_start.status.gold)
+        self.assertEqual(after_start.status.debt, before_start.status.debt)
+        self.assertEqual(after_start.status.elapsed_seconds, before_start.status.elapsed_seconds)
         self.assertEqual(game.wave_runner.wave, game.waves[1])
         self.assertEqual(game.wave_runner.elapsed_seconds, 0.0)
         self.assertEqual(game.wave_runner.spawned_counts, [0, 0])
@@ -90,6 +98,7 @@ class WaveValidationTest(unittest.TestCase):
 
     def test_defeat_cannot_be_settled_or_restarted(self) -> None:
         self.game = GameState(create_demo_map(), core_hp=1)
+        self.game.start_next_wave()
         self.game.step(30.0)
 
         self.assertTrue(self.game.is_finished)
@@ -109,6 +118,7 @@ class WaveValidationTest(unittest.TestCase):
         # Extra health lets real enemies finish their routes without defenses.
         self.game = GameState(create_demo_map(), core_hp=100)
         game = self.game
+        game.start_next_wave()
 
         for index in range(len(game.waves)):
             with self.subTest(wave=index):

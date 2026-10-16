@@ -8,17 +8,16 @@ targets, applies damage, and settles rewards, and `TextRenderer` only reads
 their current positions.
 
 Enemies in the current prototype only move along `GridMap.route`. They do not
-actively attack buildings or change routes. `path_progress` is measured in
-route-index intervals, not pixels or absolute coordinates; future dynamic
-pathfinding needs to redefine that field and its compatibility with existing
-tests or saves.
+actively attack buildings or change routes. `path_progress` is physical
+distance along the centerline, in small-cell world units, not waypoint indices.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from grid_td.position import Position
+from grid_td.path import RoutePath
+from grid_td.position import LEGACY_TILE_SIZE, Position, WorldPosition
 
 
 @dataclass
@@ -27,7 +26,7 @@ class Enemy:
 
     name: str  # Display name or debug identifier.
     max_hp: float  # Maximum health.
-    speed: float  # Route-index units advanced per logical second when unslowed.
+    speed: float  # World units per logical second when unslowed.
     damage_to_core: int  # Damage dealt to the core on reaching route end.
     reward: int  # Gold immediately awarded to GameState when defeated.
     path_progress: float = 0.0  # Continuous progress from the route start.
@@ -71,19 +70,17 @@ class Enemy:
         self.path_progress += self.current_speed() * seconds
         self.slow_seconds_remaining = max(0.0, self.slow_seconds_remaining - seconds)
 
-    def position_on_route(self, route: tuple[Position, ...]) -> Position:
-        """Map continuous route progress to the current grid cell.
+    def world_position_on_route(self, path: RoutePath) -> WorldPosition:
+        """Sample continuous position using traveled distance, not a route index."""
+        return path.position_at(self.path_progress)
 
-        Progress is floored and clamped to the last route cell, so multiple
-        enemies may overlap in the same rendered cell. The caller must provide
-        a non-empty `route`.
-        """
-        route_index = min(int(self.path_progress), len(route) - 1)
-        return route[route_index]
+    def position_on_route(self, path: RoutePath) -> Position:
+        """Return the small cell containing the enemy's continuous position."""
+        return self.world_position_on_route(path).cell
 
-    def has_reached_core(self, route: tuple[Position, ...]) -> bool:
-        """Return whether the enemy has reached the route-end core-adjacent cell."""
-        return self.path_progress >= len(route) - 1
+    def has_reached_core(self, path: RoutePath) -> bool:
+        """Preserve arrival at the final centerline point adjacent to the core."""
+        return self.path_progress >= path.length
 
 
 def create_enemy(kind: str) -> Enemy:
@@ -100,10 +97,10 @@ def create_enemy(kind: str) -> Enemy:
         ValueError: Unknown enemy type.
     """
     templates = {
-        "basic": Enemy("Basic", max_hp=10, speed=0.75, damage_to_core=1, reward=4),
-        "fast": Enemy("Fast", max_hp=7, speed=1.25, damage_to_core=1, reward=5),
-        "armored": Enemy("Armored", max_hp=24, speed=0.45, damage_to_core=2, reward=8),
-        "saboteur": Enemy("Saboteur", max_hp=14, speed=0.85, damage_to_core=2, reward=7),
+        "basic": Enemy("Basic", max_hp=10, speed=0.75 * LEGACY_TILE_SIZE, damage_to_core=1, reward=4),
+        "fast": Enemy("Fast", max_hp=7, speed=1.25 * LEGACY_TILE_SIZE, damage_to_core=1, reward=5),
+        "armored": Enemy("Armored", max_hp=24, speed=0.45 * LEGACY_TILE_SIZE, damage_to_core=2, reward=8),
+        "saboteur": Enemy("Saboteur", max_hp=14, speed=0.85 * LEGACY_TILE_SIZE, damage_to_core=2, reward=7),
     }
 
     try:
