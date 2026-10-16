@@ -25,6 +25,7 @@ from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.board_view import BoardView
 from gui.hud import HUD
+from gui.menu import MenuView
 from gui.sidebar import Sidebar
 from gui.styles import BACKGROUND, FPS, WINDOW_SIZE
 
@@ -46,6 +47,8 @@ class CriticalGridGUI:
         self.board = BoardView(self.game, self.screen, self.font)
         self.sidebar = Sidebar(self.screen, self.manager, self.small_font, self.font)
         self.hud = HUD(self.screen, self.font, self.small_font, self.title_font)
+        self.menu = MenuView(self.screen)
+        self.view = "start"
         self.running = False
         # Build mode and tower selection are exclusive; inspection is independent.
         self.selected_kind: str | None = None
@@ -54,6 +57,15 @@ class CriticalGridGUI:
         # Accumulate real frame time until a one-second game step is due.
         self.simulation_accumulator = 0.0
         self.message = "Click the map to inspect. Choose a building button before placing."
+
+    def _handle_menu_action(self, action: str | None) -> None:
+        """Move between the title, level selection, and playable game screens."""
+        if self.view == "start" and action == "enter":
+            self.view = "levels"
+        elif self.view == "levels" and action == "back":
+            self.view = "start"
+        elif self.view == "levels" and action == "play":
+            self.view = "game"
 
     def _handle_button(self, button: UIButton) -> None:
         """Dispatch sidebar actions and keep the selection state in sync."""
@@ -224,8 +236,19 @@ class CriticalGridGUI:
                 # Cap frame time to limit animation jumps after a window stall.
                 dt = min(self.clock.tick(FPS) / 1000.0, 0.25)
                 for event in pygame.event.get():
+                    was_game = self.view == "game"
                     if event.type == pygame.QUIT:
                         active = False
+                    elif not was_game:
+                        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            self._handle_menu_action(self.menu.action_at(self.view, event.pos))
+                        elif event.type == pygame.KEYDOWN:
+                            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                                self._handle_menu_action(
+                                    "enter" if self.view == "start" else "play"
+                                )
+                            elif event.key == pygame.K_ESCAPE and self.view == "levels":
+                                self._handle_menu_action("back")
                     elif event.type == pygame_gui.UI_BUTTON_PRESSED:
                         self._handle_button(event.ui_element)
                     elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -236,27 +259,30 @@ class CriticalGridGUI:
                         self._overload_selected_tower()
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         self._cancel_build()
-                    self.manager.process_events(event)
+                    if was_game:
+                        self.manager.process_events(event)
 
-                if self.running:
+                if self.view == "game" and self.running:
                     self.simulation_accumulator += dt
                     # Run fixed one-second logic steps while rendering every frame.
                     while self.simulation_accumulator >= 1.0 and self.running:
                         self.simulation_accumulator -= 1.0
                         self._advance_once(animate=True)
-                self.board.update(dt)
-
-                self.manager.update(dt)
-                self.screen.fill(BACKGROUND)
-                self.hud.draw_status(self.game, self.running)
-                self.board.draw(
-                    self.selected_tower_id,
-                    self.inspected_position,
-                    show_hover=not self.game.is_finished,
-                )
-                self.sidebar.draw(self.game, self.selected_kind, self.inspected_position)
-                self.hud.draw_message(self.message)
-                self.manager.draw_ui(self.screen)
+                if self.view == "game":
+                    self.board.update(dt)
+                    self.manager.update(dt)
+                    self.screen.fill(BACKGROUND)
+                    self.hud.draw_status(self.game, self.running)
+                    self.board.draw(
+                        self.selected_tower_id,
+                        self.inspected_position,
+                        show_hover=not self.game.is_finished,
+                    )
+                    self.sidebar.draw(self.game, self.selected_kind, self.inspected_position)
+                    self.hud.draw_message(self.message)
+                    self.manager.draw_ui(self.screen)
+                else:
+                    self.menu.draw(self.view, pygame.mouse.get_pos())
                 pygame.display.flip()
                 frames += 1
                 if max_frames is not None and frames >= max_frames:
