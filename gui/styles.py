@@ -2,7 +2,7 @@
 
 WINDOW_SIZE = (1080, 660)
 # Drawing and mouse hit detection share this board origin and cell size.
-BOARD_LEFT, BOARD_TOP, CELL = 35, 132, 53
+BOARD_LEFT, BOARD_TOP, CELL = 35, 132, 18
 PANEL_LEFT = 720
 FPS = 60
 
