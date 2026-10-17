@@ -50,7 +50,7 @@ class MenuView:
         """Render a menu screen with the same console palette as the game."""
         self.screen.fill(BACKGROUND)
         self._draw_grid()
-        self._text("CRITICAL GRID  /  前线控制台", (94, 53), self.small_font, ACCENT)
+        self._text("CRITICAL GRID  /  FRONTIER CONTROL", (94, 53), self.small_font, ACCENT)
         pygame.draw.line(self.screen, BORDER, (92, 91), (988, 91), 1)
         if view == "start":
             self._draw_start(mouse_pos)
@@ -70,15 +70,15 @@ class MenuView:
         """Show the title, entry action, and a schematic of the defense map."""
         self._text("CRITICAL", (93, 175), self.title_font, TEXT)
         self._text("GRID", (93, 244), self.title_font, ACCENT)
-        self._text("建设电网，守住核心。", (100, 348), self.body_font, TEXT)
-        self._text("规划资源与防线，抵御一波波进攻。", (100, 386), self.small_font, MUTED)
-        self._button(self.buttons["start"]["enter"], "进入   →", mouse_pos)
+        self._text("Build the grid. Defend the core.", (100, 348), self.body_font, TEXT)
+        self._text("Plan resources and defenses. Survive each wave.", (100, 386), self.small_font, MUTED)
+        self._button(self.buttons["start"]["enter"], "ENTER   →", mouse_pos)
 
         # A small map schematic ties the title screen to the grid gameplay.
         panel = pygame.Rect(545, 156, 443, 390)
         pygame.draw.rect(self.screen, CARD, panel, border_radius=12)
         pygame.draw.rect(self.screen, BORDER, panel, width=1, border_radius=12)
-        self._text("防线预览  /  GRID STATUS", (571, 180), self.small_font, MUTED)
+        self._text("DEFENSE PREVIEW  /  GRID STATUS", (571, 180), self.small_font, MUTED)
         cell = 42
         origin = (592, 254)
         for row in range(5):
@@ -99,24 +99,24 @@ class MenuView:
             pygame.draw.circle(self.screen, ACCENT, center, 3)
         core = (origin[0] + 6 * cell + 17, origin[1] + cell + 17)
         pygame.draw.rect(self.screen, GOLD, pygame.Rect(core[0] - 10, core[1] - 10, 20, 20), width=3)
-        self._text("目标：保护核心", (572, 494), self.small_font, GOLD)
+        self._text("OBJECTIVE: PROTECT THE CORE", (572, 494), self.small_font, GOLD)
 
     def _draw_levels(self, mouse_pos: tuple[int, int]) -> None:
         """Present the single fixed map currently available in the core."""
-        self._text("选择关卡", (92, 125), self.heading_font, TEXT)
-        self._text("选择一处前线基地，开始部署。", (94, 175), self.small_font, MUTED)
+        self._text("SELECT LEVEL", (92, 125), self.heading_font, TEXT)
+        self._text("Choose a frontier base and begin deployment.", (94, 175), self.small_font, MUTED)
 
         card = pygame.Rect(92, 224, 896, 294)
         pygame.draw.rect(self.screen, CARD, card, border_radius=12)
         pygame.draw.rect(self.screen, BORDER, card, width=1, border_radius=12)
         pygame.draw.rect(self.screen, ACCENT, pygame.Rect(92, 224, 5, 294), border_radius=2)
         self._text("01", (123, 255), self.title_font, ACCENT)
-        self._text("前线演示", (237, 264), self.heading_font, TEXT)
-        self._text("已解锁  /  固定地图", (240, 316), self.small_font, GOLD)
+        self._text("FRONTIER DEMO", (237, 264), self.heading_font, TEXT)
+        self._text("UNLOCKED  /  FIXED MAP", (240, 316), self.small_font, GOLD)
         pygame.draw.line(self.screen, BORDER, (237, 356), (944, 356), 1)
-        self._text("36 × 21 小格     单一路线     电网与塔防", (240, 382), self.body_font, MUTED)
-        self._button(self.buttons["levels"]["play"], "开始关卡   →", mouse_pos)
-        self._button(self.buttons["levels"]["back"], "←  返回", mouse_pos, secondary=True)
+        self._text("36 × 21 cells    Fixed route    Power grid & towers", (240, 382), self.body_font, MUTED)
+        self._button(self.buttons["levels"]["play"], "START LEVEL   →", mouse_pos)
+        self._button(self.buttons["levels"]["back"], "←  BACK", mouse_pos, secondary=True)
 
     def _button(
         self,
