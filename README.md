@@ -32,8 +32,9 @@ status object plus a row-major board of cell snapshots, so both text and GUI
 frontends can render the same source of truth.
 
 The current Python prototype is intentionally smaller than
-`GAME_DESIGN.md`: the power grid connects buildings through directly adjacent
-occupied cells, the demo contains four waves, routing is fixed, and building
+`GAME_DESIGN.md`: the power grid propagates through the core, power plants and
+power nodes using a six-world-unit coverage radius; ordinary buildings do not
+relay power. The demo contains four waves, routing is fixed, and building
 health/damage is not yet modeled as mutable state. Treat the code as the
 behavioral source of truth when changing the prototype; use the design document
 for planned features and unresolved rules.
