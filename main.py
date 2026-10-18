@@ -35,8 +35,9 @@ def build_demo_defense(game: GameState) -> None:
     game.build("power_plant", Position(30, 6))
     game.build("gun_tower", Position(30, 9))
     game.build("slow_tower", Position(30, 12))
-    game.build("power_node", Position(30, 15))
-    game.build("power_node", Position(27, 15))
+    # Nodes, rather than powered towers, extend coverage toward the mine.
+    game.build("power_node", Position(24, 6))
+    game.build("power_node", Position(24, 9))
     game.build("mine", Position(24, 15))
 
 
