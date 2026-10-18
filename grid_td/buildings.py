@@ -2,15 +2,9 @@
 
 This module defines the core, mines, power sources, power nodes, and three
 tower types. These are mutable entities created and driven by the game-state
-layer. `GameState` owns lifecycle, build cost, and debt side effects;
+layer. `GameState` owns lifecycle, build cost, damage, and debt side effects;
 `PowerGrid` writes `connected_to_grid` and `efficiency` back to every building;
 `TextRenderer` chooses display symbols from concrete building types.
-
-Building objects use dataclasses for runtime state, but the current prototype
-does not yet have separate mutable building health: `hp` still returns
-`max_hp`. Damage or destruction logic therefore needs a real health source and
-clear effects on connectivity and production; changing only the renderer or
-power-grid calculation would be incomplete.
 """
 
 from __future__ import annotations
@@ -36,6 +30,7 @@ class Building:
     position: Position  # Top-left anchor in small-cell coordinates.
     cost: int  # One-time gold cost paid when building.
     max_hp: int  # Prototype max health, in integer hit points.
+    current_hp: int | None = None  # Mutable health; initialized from max_hp.
     power_supply: int = 0  # Power supply counted after grid connection.
     power_draw: int = 0  # Power demand counted after grid connection.
     efficiency: float = 0.0  # Work multiplier calculated by PowerGrid.
@@ -50,6 +45,8 @@ class Building:
 
     def __post_init__(self) -> None:
         self.footprint = self.FOOTPRINT
+        if self.current_hp is None:
+            self.current_hp = self.max_hp
 
     @property
     def width(self) -> int:
@@ -74,13 +71,20 @@ class Building:
 
     @property
     def hp(self) -> int:
-        """Return current building health.
+        """Return current building health, clamped between zero and max HP."""
+        assert self.current_hp is not None
+        return self.current_hp
 
-        The current implementation does not store separate damaged health, so
-        this always equals `max_hp`. The property keeps a stable read interface
-        for a future damage system.
-        """
-        return self.max_hp
+    @property
+    def is_destroyed(self) -> bool:
+        """Return whether the building can no longer operate or relay power."""
+        return self.hp <= 0
+
+    def take_damage(self, amount: int) -> None:
+        """Apply positive integer damage and clamp health at zero."""
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+            raise ValueError("Building damage must be a positive integer.")
+        self.current_hp = max(0, self.hp - amount)
 
     @property
     def is_power_source(self) -> bool:
@@ -89,7 +93,7 @@ class Building:
 
     def can_transmit_power(self) -> bool:
         """Return whether this connected building can pass coverage onward."""
-        return self.connected_to_grid and self.TRANSMITS_POWER
+        return self.connected_to_grid and self.TRANSMITS_POWER and not self.is_destroyed
 
 
 @dataclass
@@ -164,14 +168,18 @@ class PowerPlant(Building):
 
 @dataclass
 class PowerNode(Building):
-    """Network relay that transmits power without adding supply."""
+    """Network relay that transmits power without adding supply.
+
+    Nodes can be damaged by saboteurs; a destroyed node remains in its cell but
+    no longer participates in power propagation.
+    """
 
     SYMBOL: ClassVar[str] = "N"  # Map character used by TextRenderer.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
     TRANSMITS_POWER: ClassVar[bool] = True
 
     def __init__(self, building_id: int, position: Position) -> None:
-        """Create a node that extends adjacent-grid connectivity only."""
+        """Create a node that extends radius-based power coverage."""
         super().__init__(
             id=building_id,
             name="Power Node",
