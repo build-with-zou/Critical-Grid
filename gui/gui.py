@@ -1,8 +1,8 @@
-"""Pygame GUI for the current Critical Grid prototype.
+"""Pygame GUI for the current Critical Grid spatial and phase contracts.
 
 Run from the project root with ``python gui/gui.py``. Requires pygame-ce and
-pygame_gui. GameState owns combat; the GUI calls its public methods and shows
-the results.
+pygame_gui. Gameplay changes go through GameState commands; drawing uses its
+immutable snapshot.
 """
 
 from __future__ import annotations
@@ -19,18 +19,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from grid_td.buildings import Tower
-from grid_td.game_state import GameState
+from grid_td.game_state import BuildingSnapshot, GamePhase, GameSnapshot, GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.board_view import BoardView
 from gui.hud import HUD
+from gui.menu import MenuView
 from gui.sidebar import Sidebar
 from gui.styles import BACKGROUND, FPS, WINDOW_SIZE
 
 
+LOGIC_STEP = 0.05
+
+
 class CriticalGridGUI:
-    """Own the window and input state; let GameState own the game state."""
+    """Own window and input state while GameState owns the simulation."""
 
     def __init__(self) -> None:
         pygame.init()
@@ -43,189 +46,217 @@ class CriticalGridGUI:
         self.title_font = pygame.font.SysFont("arial", 30, bold=True)
 
         self.game = GameState(create_demo_map())
-        self.board = BoardView(self.game, self.screen, self.font)
+        self.board = BoardView(self.screen, self.font)
         self.sidebar = Sidebar(self.screen, self.manager, self.small_font, self.font)
         self.hud = HUD(self.screen, self.font, self.small_font, self.title_font)
+        self.menu = MenuView(self.screen)
+        self.view = "start"
         self.running = False
-        # Build mode and tower selection are exclusive; inspection is independent.
         self.selected_kind: str | None = None
         self.selected_tower_id: int | None = None
         self.inspected_position: Position | None = None
-        # Accumulate real frame time until a one-second game step is due.
         self.simulation_accumulator = 0.0
-        self.message = "Click the map to inspect. Choose a building button before placing."
+        self.message = "Plan your grid. Select a building, then click a small-cell anchor."
+        self.sidebar.set_phase(GamePhase.DAY, self.running)
+
+    def _handle_menu_action(self, action: str | None) -> None:
+        """Move between the title, level selection, and playable game screens."""
+        if self.view == "start" and action == "enter":
+            self.view = "levels"
+        elif self.view == "levels" and action == "back":
+            self.view = "start"
+        elif self.view == "levels" and action == "play":
+            self.view = "game"
 
     def _handle_button(self, button: UIButton) -> None:
-        """Dispatch sidebar actions and keep the selection state in sync."""
+        """Dispatch commands through GameState and reflect phase changes."""
+        status = self.game.snapshot().status
         if button in self.sidebar.build_buttons:
-            if self.game.is_finished:
-                self.message = self.game.result_message
+            if status.is_finished:
+                self.message = status.result_message
                 return
-            chosen_kind = self.sidebar.build_buttons[button]
-            self.selected_kind = None if self.selected_kind == chosen_kind else chosen_kind
+            kind = self.sidebar.build_buttons[button]
+            self.selected_kind = None if self.selected_kind == kind else kind
             self.selected_tower_id = None
             self.sidebar.update_build_selection(self.selected_kind)
-            if self.selected_kind is None:
-                self.message = "Build cancelled. Click the map to inspect."
-            else:
-                self.message = (
-                    f"Build mode: {self.selected_kind.replace('_', ' ')}. "
-                    "Click a map cell."
-                )
+            self.message = (
+                f"Choose an anchor for {self.selected_kind.replace('_', ' ')}."
+                if self.selected_kind else "Build cancelled. Click the map to inspect."
+            )
         elif button == self.sidebar.run_button:
-            if self.game.is_finished:
-                self.message = self.game.result_message
-                return
-            self.running = not self.running
-            self.simulation_accumulator = 0.0
-            if not self.running:
-                # Finish movement interpolation when the simulation is paused.
-                self.board.finish_animation()
-            self.sidebar.set_running(self.running)
-            self.message = "Simulation running." if self.running else "Simulation paused."
+            if status.is_finished:
+                self.message = status.result_message
+            elif status.phase == GamePhase.DAY:
+                try:
+                    self.game.start_next_wave()
+                except ValueError as error:
+                    self.message = str(error)
+                else:
+                    self.running = True
+                    self.simulation_accumulator = 0.0
+                    self.message = "Night started. Defend the core."
+            else:
+                self.running = not self.running
+                self.simulation_accumulator = 0.0
+                self.message = "Simulation running." if self.running else "Simulation paused."
+            self.sidebar.set_phase(self.game.snapshot().status.phase, self.running)
         elif button == self.sidebar.step_button:
-            self._advance_once(animate=True)
+            if status.phase != GamePhase.NIGHT:
+                self.message = (
+                    status.result_message if status.is_finished
+                    else "Start Night before stepping the simulation."
+                )
+            else:
+                for _ in range(round(1.0 / LOGIC_STEP)):
+                    if self.game.snapshot().status.phase != GamePhase.NIGHT:
+                        break
+                    self._advance_once(LOGIC_STEP)
         elif button == self.sidebar.cancel_build_button:
             self._cancel_build()
         elif button == self.sidebar.demolish_button:
             self._demolish_selected_tower()
 
     def _cancel_build(self) -> None:
-        """Leave build mode without changing the inspected position."""
+        """Leave construction mode without changing the inspected cell."""
         self.selected_kind = None
         self.sidebar.update_build_selection(None)
         self.message = "Build cancelled. Click the map to inspect."
 
     def _handle_board_click(self, mouse_pos: tuple[int, int]) -> None:
-        """Inspect a cell or try to place the selected building there."""
-        position = self.board.position_at(mouse_pos)
+        """Inspect an occupied small cell or build from its top-left anchor."""
+        snapshot = self.game.snapshot()
+        position = self.board.position_at(mouse_pos, snapshot)
         if position is None:
             return
         self.inspected_position = position
-        building_at_position = self.game.building_at(position)
+        building = snapshot.board[position.y][position.x].building
         if self.selected_kind is None:
-            # Only towers become selected; all cells can still be inspected.
             self.selected_tower_id = (
-                building_at_position.id if isinstance(building_at_position, Tower) else None
+                building.id if building is not None and building.range is not None else None
             )
-            if building_at_position is None:
+            if building is None:
                 self.message = f"Terrain at ({position.x}, {position.y}) selected."
             else:
-                self.message = (
-                    f"{building_at_position.name} at "
-                    f"({position.x}, {position.y}) selected."
-                )
-                if self.selected_tower_id is not None:
-                    if not building_at_position.connected_to_grid:
-                        self.message += " Disconnected towers cannot attack."
-                    elif building_at_position.efficiency <= 0:
-                        self.message += " This tower needs power to attack."
-                    elif not self._tower_reaches_route(building_at_position):
-                        self.message += " Its range does not reach the enemy path."
+                self.message = f"{building.name} at ({position.x}, {position.y}) selected."
+                if building.range is not None:
+                    if not building.connected_to_grid:
+                        self.message += " Connect this tower to the core."
+                    elif building.efficiency <= 0:
+                        self.message += " This tower needs power."
                     else:
-                        self.message += " Highlighted path tiles are in range. O: overload."
+                        self.message += " Highlighted cells are in range. O: overload."
             return
-        if self.game.is_finished:
-            self.message = self.game.result_message
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
             return
         self.selected_tower_id = None
         try:
-            # GameState.build validates terrain, resources, and placement.
-            building = self.game.build(self.selected_kind, position)
+            # The core rechecks the full footprint even after a valid hover preview.
+            self.game.build(self.selected_kind, position)
         except ValueError as error:
             self.message = f"Build failed: {error}"
         else:
-            self.message = f"Built {building.name} at ({position.x}, {position.y})."
-            if isinstance(building, Tower):
-                self.selected_tower_id = building.id
-                if not building.connected_to_grid:
+            placed = self.game.snapshot().board[position.y][position.x].building
+            assert placed is not None
+            self.message = f"Built {placed.name} at ({position.x}, {position.y})."
+            if placed.range is not None:
+                self.selected_tower_id = placed.id
+                if not placed.connected_to_grid:
                     self.message += " Connect it to the core before it can attack."
-                elif not self._tower_reaches_route(building):
-                    self.message += " Its range does not reach the enemy path."
-                else:
-                    self.message += " Highlighted path tiles are in range."
             self.selected_kind = None
             self.sidebar.update_build_selection(None)
 
-    def _tower_reaches_route(self, tower: Tower) -> bool:
-        """Check whether the tower's Manhattan range reaches any route cell."""
-        return any(
-            tower.position.manhattan_distance(position) <= tower.range
-            for position in self.game.grid_map.route
-        )
+    def _selected_tower(self, snapshot: GameSnapshot) -> BuildingSnapshot | None:
+        """Resolve a selected ID from the current snapshot after core changes."""
+        for row in snapshot.board:
+            for cell in row:
+                building = cell.building
+                if (
+                    building is not None and building.id == self.selected_tower_id
+                    and building.range is not None
+                ):
+                    return building
+        return None
 
     def _demolish_selected_tower(self) -> None:
-        """Demolish the selected tower and clear its selection."""
-        if self.game.is_finished:
-            self.message = self.game.result_message
+        """Demolish the selected tower via its stable snapshot ID."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
             return
-        if self.selected_tower_id is None:
+        tower = self._selected_tower(snapshot)
+        if tower is None:
             self.message = "Click an existing tower first, then press Demolish."
             return
         try:
-            tower = self.game.demolish_tower(self.selected_tower_id)
+            self.game.demolish_tower(tower.id)
         except ValueError as error:
             self.message = str(error)
         else:
-            self.message = (
-                f"Demolished {tower.name} at "
-                f"({tower.position.x}, {tower.position.y}). No refund."
-            )
+            self.message = f"Demolished {tower.name}. No refund."
         self.selected_tower_id = None
 
     def _overload_selected_tower(self) -> None:
-        """Ask GameState to overload the selected tower."""
-        if self.game.is_finished:
-            self.message = self.game.result_message
+        """Overload the selected tower while keeping display data immutable."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
             return
-        if self.selected_tower_id is None:
+        tower = self._selected_tower(snapshot)
+        if tower is None:
             self.message = "Click an existing tower first, then press O to overload."
             return
         try:
-            tower = self.game.find_tower(self.selected_tower_id)
             self.game.overload_tower(tower.id)
         except ValueError as error:
             self.selected_tower_id = None
             self.message = str(error)
         else:
-            self.message = (
-                f"{tower.name} overloaded for 8s. Debt +10; repair costs 5 gold "
-                "at wave end."
-            )
+            debt_added = self.game.snapshot().status.debt - snapshot.status.debt
+            self.message = f"{tower.name} overloaded. Debt +{debt_added}; repair due."
 
-    def _advance_once(self, *, animate: bool = False) -> None:
-        """Advance one logic second and capture states for board animation."""
-        if self.game.is_finished:
-            self.message = self.game.result_message
-            return
-        before = self.board.capture_progress()
-        combat_before = self.board.capture_combat()
-        # Snapshot first so movement and beams reflect resolved game actions.
-        self.game.step(1.0)
-        self.board.complete_step(before, animate=animate)
-        self.board.show_combat_results(combat_before, 1.0)
-        if self.game.waiting_for_next_wave:
-            # Settle the wave and start the next one if the game continues.
-            self.message = self.game.end_wave()
-            if not self.game.is_finished:
-                self.game.start_next_wave()
-        if self.game.is_finished:
+    def _advance_once(self, seconds: float) -> None:
+        """Advance one short core step and return to planning after settlement."""
+        status = self.game.snapshot().status
+        if status.is_finished or status.phase != GamePhase.NIGHT:
             self.running = False
-            self.board.finish_animation()
-            self.sidebar.set_running(False)
-            self.message = self.game.result_message
+            self.sidebar.set_phase(status.phase, False)
+            return
+        self.game.step(seconds)
+        status = self.game.snapshot().status
+        if status.waiting_for_next_wave:
+            self.message = self.game.end_wave()
+            self.running = False
+            self.simulation_accumulator = 0.0
+        status = self.game.snapshot().status
+        if status.is_finished:
+            self.running = False
+            self.simulation_accumulator = 0.0
+            self.message = status.result_message
+        if status.phase != GamePhase.NIGHT:
+            self.sidebar.set_phase(status.phase, self.running)
 
     def run(self, max_frames: int | None = None) -> None:
-        """Start the event loop. max_frames is useful for a headless smoke check."""
+        """Run input, fixed logical steps, and rendering; cap frames for smoke checks."""
         frames = 0
         try:
             active = True
             while active:
-                # Cap frame time to limit animation jumps after a window stall.
                 dt = min(self.clock.tick(FPS) / 1000.0, 0.25)
                 for event in pygame.event.get():
+                    was_game = self.view == "game"
                     if event.type == pygame.QUIT:
                         active = False
+                    elif not was_game:
+                        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                            self._handle_menu_action(self.menu.action_at(self.view, event.pos))
+                        elif event.type == pygame.KEYDOWN:
+                            if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                                self._handle_menu_action(
+                                    "enter" if self.view == "start" else "play"
+                                )
+                            elif event.key == pygame.K_ESCAPE and self.view == "levels":
+                                self._handle_menu_action("back")
                     elif event.type == pygame_gui.UI_BUTTON_PRESSED:
                         self._handle_button(event.ui_element)
                     elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -236,27 +267,41 @@ class CriticalGridGUI:
                         self._overload_selected_tower()
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         self._cancel_build()
-                    self.manager.process_events(event)
+                    if was_game:
+                        self.manager.process_events(event)
 
-                if self.running:
+                if self.view == "game" and self.running:
                     self.simulation_accumulator += dt
-                    # Run fixed one-second logic steps while rendering every frame.
-                    while self.simulation_accumulator >= 1.0 and self.running:
-                        self.simulation_accumulator -= 1.0
-                        self._advance_once(animate=True)
-                self.board.update(dt)
+                    while self.simulation_accumulator + 1e-9 >= LOGIC_STEP and self.running:
+                        self.simulation_accumulator -= LOGIC_STEP
+                        self._advance_once(LOGIC_STEP)
 
-                self.manager.update(dt)
-                self.screen.fill(BACKGROUND)
-                self.hud.draw_status(self.game, self.running)
-                self.board.draw(
-                    self.selected_tower_id,
-                    self.inspected_position,
-                    show_hover=not self.game.is_finished,
-                )
-                self.sidebar.draw(self.game, self.selected_kind, self.inspected_position)
-                self.hud.draw_message(self.message)
-                self.manager.draw_ui(self.screen)
+                if self.view == "game":
+                    snapshot = self.game.snapshot()
+                    hover = (
+                        self.board.position_at(pygame.mouse.get_pos(), snapshot)
+                        if not snapshot.status.is_finished else None
+                    )
+                    preview = None
+                    display_message = self.message
+                    if self.selected_kind is not None and hover is not None:
+                        preview = self.game.preview_build(self.selected_kind, hover)
+                        display_message = (
+                            f"Click to place {self.selected_kind.replace('_', ' ')}."
+                            if preview.is_valid else f"Cannot place: {preview.reason}"
+                        )
+                    self.manager.update(dt)
+                    self.screen.fill(BACKGROUND)
+                    self.hud.draw_status(snapshot, self.running)
+                    self.board.draw(
+                        snapshot, self.selected_tower_id,
+                        self.inspected_position, hover, preview,
+                    )
+                    self.sidebar.draw(snapshot, self.selected_kind, self.inspected_position)
+                    self.hud.draw_message(display_message)
+                    self.manager.draw_ui(self.screen)
+                else:
+                    self.menu.draw(self.view, pygame.mouse.get_pos())
                 pygame.display.flip()
                 frames += 1
                 if max_frames is not None and frames >= max_frames:

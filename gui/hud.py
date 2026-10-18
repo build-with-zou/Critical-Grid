@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pygame
 
-from grid_td.game_state import GameState
+from grid_td.game_state import GamePhase, GameSnapshot
 from gui.styles import MUTED, PANEL, TEXT
 
 
@@ -23,20 +23,28 @@ class HUD:
         self.small_font = small_font
         self.title_font = title_font
 
-    def draw_status(self, game: GameState, running: bool) -> None:
-        """Show resources, wave progress, and the latest power-grid report."""
-        report = game.latest_power_report
+    def draw_status(self, snapshot: GameSnapshot, running: bool) -> None:
+        """Show phase, wave, resources and power from one immutable snapshot."""
+        status = snapshot.status
+        report = status.power
+        activity = (
+            "PLANNING" if status.phase == GamePhase.DAY
+            else "RUNNING" if running and status.phase == GamePhase.NIGHT
+            else "PAUSED" if status.phase == GamePhase.NIGHT
+            else "FINISHED"
+        )
         pygame.draw.rect(
             self.screen, PANEL, pygame.Rect(18, 16, 1044, 96), border_radius=8
         )
         self._text("CRITICAL GRID", 34, 25, font=self.title_font)
         self._text(
-            f"{game.current_wave_name}   Time {game.elapsed_seconds}s"
-            f"   {'RUNNING' if running else 'PAUSED'}",
+            f"{status.current_wave_name}"
+            f"   {status.phase.value.upper()}   {activity}"
+            f"   Time {status.elapsed_seconds:.1f}s",
             339, 32, color=MUTED,
         )
         self._text(
-            f"Gold {game.gold}    Debt {game.debt}    Core HP {game.core_hp}"
+            f"Gold {status.gold}    Debt {status.debt}    Core HP {status.core_hp}"
             f"    Power {report.total_supply}/{report.total_demand}"
             f"    Efficiency {report.efficiency:.0%}",
             34, 76, font=self.small_font,
