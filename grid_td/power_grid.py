@@ -111,13 +111,17 @@ class PowerGrid:
         """
         connected: set[int] = {
             index for index, building in enumerate(buildings)
-            if isinstance(building, Core) and building.occupies(grid_map.core_position)
+            if (
+                isinstance(building, Core)
+                and not building.is_destroyed
+                and building.occupies(grid_map.core_position)
+            )
         }
         if not connected:
             return set()
 
         def is_transmitter(building: Building) -> bool:
-            return building.TRANSMITS_POWER
+            return building.TRANSMITS_POWER and not building.is_destroyed
 
         # Repeatedly add the nearest transmitter that falls inside coverage.
         # ``min`` makes the nearest-source rule explicit and keeps behavior
@@ -147,7 +151,7 @@ class PowerGrid:
             if is_transmitter(buildings[index])
         ]
         for index, building in enumerate(buildings):
-            if index in connected or not transmitters:
+            if index in connected or building.is_destroyed or not transmitters:
                 continue
             nearest = min(
                 world_distance(building.center, source.center)
