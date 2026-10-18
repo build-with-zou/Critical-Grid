@@ -62,6 +62,7 @@ class BoardView:
             self.screen, PANEL, board_rect.inflate(16, 16), border_radius=6
         )
 
+        # Each footprint repeats its building in every occupied cell.
         buildings: dict[int, BuildingSnapshot] = {}
         for row in snapshot.board:
             for cell in row:
@@ -77,6 +78,7 @@ class BoardView:
                 if cell.building is not None:
                     buildings[cell.building.id] = cell.building
 
+        # Keep range and power links beneath units; draw interaction outlines last.
         selected = buildings.get(selected_tower_id)
         if selected is not None and selected.range is not None:
             self._draw_range(snapshot, selected)
@@ -142,6 +144,7 @@ class BoardView:
                 source = cell.building
                 if source is None or not source.connected_to_grid:
                     continue
+                # Right and down cover every shared edge without scanning it twice.
                 for dx, dy in ((1, 0), (0, 1)):
                     x, y = cell.position.x + dx, cell.position.y + dy
                     if x >= snapshot.width or y >= snapshot.height:
@@ -182,10 +185,11 @@ class BoardView:
                 self.screen.blit(warning, (rect.right - 13, rect.top + 2))
 
     def _draw_enemies(self, snapshot: GameSnapshot) -> None:
-        """Place enemies at world positions, spreading markers in crowded cells."""
+        """Draw current world positions; snapshots have no stable enemy IDs."""
         for row in snapshot.board:
             for cell in row:
                 count = len(cell.enemies)
+                # Limit overlapping markers, then show the full count for crowded cells.
                 for index, enemy in enumerate(cell.enemies[:4]):
                     x, y = self._world_point(enemy.world_position, snapshot)
                     offset = ((index % 2) * 2 - 1, (index // 2) * 2 - 1)
@@ -214,6 +218,7 @@ class BoardView:
         color = CHARGED_COLOR if preview.is_valid else UNCHARGED_COLOR
         overlay = pygame.Surface(rect.size, pygame.SRCALPHA)
         overlay.fill((*color, 65))
+        # An invalid edge placement can extend past the map; confine its preview.
         self.screen.set_clip(board_rect)
         self.screen.blit(overlay, rect.topleft)
         pygame.draw.rect(self.screen, color, rect, 3)
@@ -237,6 +242,7 @@ class BoardView:
     def _world_point(
         position: WorldPosition, snapshot: GameSnapshot
     ) -> tuple[int, int]:
+        """Scale continuous world coordinates by the snapshot's cell size."""
         return (
             BOARD_LEFT + round(position.x / snapshot.cell_size * CELL),
             BOARD_TOP + round(position.y / snapshot.cell_size * CELL),
