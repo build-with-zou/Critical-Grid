@@ -52,8 +52,9 @@ class CoreLoopTest(unittest.TestCase):
         game = GameState(create_demo_map())
 
         game.build("gun_tower", Position(30, 6))
-        game.build("slow_tower", Position(30, 9))
-        cannon = game.build("cannon_tower", Position(30, 12))
+        game.build("power_node", Position(30, 9))
+        game.build("slow_tower", Position(30, 12))
+        cannon = game.build("cannon_tower", Position(33, 12))
 
         report = game.latest_power_report
         self.assertEqual(report.total_supply, 10)
