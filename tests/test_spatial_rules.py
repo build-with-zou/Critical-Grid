@@ -233,10 +233,12 @@ class FootprintPlacementTest(unittest.TestCase):
 
 
 class FootprintPowerTest(unittest.TestCase):
-    def test_partial_edge_contact_connects_and_counts_each_building_once(self) -> None:
+    def test_radius_connection_counts_each_building_once(self) -> None:
         game = GameState(empty_map())
-        tower = game.build("gun_tower", Position(13, 12))
-        node = game.build("power_node", Position(16, 14))
+        node = game.build("power_node", Position(13, 12))
+        # The tower has a gap from the node; coverage, rather than contact,
+        # is what connects it.
+        tower = game.build("gun_tower", Position(17, 12))
         report = game.latest_power_report
         self.assertTrue(tower.connected_to_grid)
         self.assertTrue(node.connected_to_grid)
@@ -244,16 +246,30 @@ class FootprintPowerTest(unittest.TestCase):
         self.assertEqual(report.total_supply, 10)
         self.assertEqual(report.total_demand, 3)
         game.demolish_tower(tower.id)
-        self.assertFalse(node.connected_to_grid)
-        self.assertEqual(node.efficiency, 0)
+        self.assertTrue(node.connected_to_grid)
+        self.assertEqual(node.efficiency, 1.0)
 
-    def test_corner_contact_and_empty_gap_do_not_connect(self) -> None:
-        for anchor in (Position(13, 13), Position(14, 10)):
+    def test_radius_boundary_is_inclusive(self) -> None:
+        # Six world units is the inclusive coverage boundary; seven is out.
+        for anchor, expected in ((Position(13, 13), True), (Position(14, 13), False)):
             with self.subTest(anchor=anchor):
                 game = GameState(empty_map())
                 node = game.build("power_node", anchor)
-                self.assertFalse(node.connected_to_grid)
-                self.assertEqual(game.latest_power_report.connected_count, 1)
+                self.assertEqual(node.connected_to_grid, expected)
+                self.assertEqual(game.latest_power_report.connected_count, 2 if expected else 1)
+
+    def test_powered_consumers_cannot_relay_to_a_nearby_plant(self) -> None:
+        game = GameState(empty_map())
+        node = game.build("power_node", Position(13, 12))
+        powered_tower = game.build("gun_tower", Position(17, 12))
+        plant = game.build("power_plant", Position(17, 15))
+
+        self.assertTrue(node.connected_to_grid)
+        self.assertTrue(powered_tower.connected_to_grid)
+        self.assertTrue(node.can_transmit_power())
+        self.assertFalse(powered_tower.can_transmit_power())
+        self.assertFalse(plant.connected_to_grid)
+        self.assertEqual(plant.efficiency, 0.0)
 
     def test_mixed_sizes_and_input_order_do_not_change_connectivity(self) -> None:
         core = Core(1, Position(10, 10))

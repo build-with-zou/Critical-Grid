@@ -46,6 +46,7 @@ class Building:
     # Each concrete type declares its own size. Change that type's FOOTPRINT
     # when introducing different dimensions; placement/power use it directly.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
+    TRANSMITS_POWER: ClassVar[bool] = False
 
     def __post_init__(self) -> None:
         self.footprint = self.FOOTPRINT
@@ -87,13 +88,8 @@ class Building:
         return self.power_supply > 0
 
     def can_transmit_power(self) -> bool:
-        """Return whether this building can pass grid connectivity onward.
-
-        This method only describes the building's local eligibility. The
-        actual connected set is still discovered from the core by
-        `PowerGrid._find_connected_positions()`.
-        """
-        return self.connected_to_grid or self.is_power_source
+        """Return whether this connected building can pass coverage onward."""
+        return self.connected_to_grid and self.TRANSMITS_POWER
 
 
 @dataclass
@@ -102,6 +98,7 @@ class Core(Building):
 
     SYMBOL: ClassVar[str] = "C"  # Map character used by TextRenderer.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
+    TRANSMITS_POWER: ClassVar[bool] = True
 
     def __init__(self, building_id: int, position: Position) -> None:
         """Create the zero-cost core with fixed health and base power."""
@@ -150,6 +147,7 @@ class PowerPlant(Building):
 
     SYMBOL: ClassVar[str] = "P"  # Map character used by TextRenderer.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
+    TRANSMITS_POWER: ClassVar[bool] = True
 
     def __init__(self, building_id: int, position: Position) -> None:
         """Create a power plant that provides 10 supply when connected."""
@@ -170,6 +168,7 @@ class PowerNode(Building):
 
     SYMBOL: ClassVar[str] = "N"  # Map character used by TextRenderer.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
+    TRANSMITS_POWER: ClassVar[bool] = True
 
     def __init__(self, building_id: int, position: Position) -> None:
         """Create a node that extends adjacent-grid connectivity only."""
