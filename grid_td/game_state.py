@@ -2,7 +2,7 @@
 
 `GameState` is the single runtime coordinator. It owns the map, gold/debt,
 buildings, enemies, core health, wave progress, and result state. It exposes
-operations for building, intel, overdraft, overload, wave settlement, and each
+operations for building, repair, intel, overdraft, overload, wave settlement, and each
 time step; `PowerGrid`, `WaveRunner`, `Building`, and `Enemy` provide the
 local rules it calls. Read-only presentation code should use `snapshot()`
 instead of reading mutable attributes directly.
@@ -101,6 +101,7 @@ class BuildingSnapshot:
     damage: float | None = None  # Tower base damage; `None` for non-towers.
     cooldown_remaining: float | None = None  # Tower cooldown; `None` for non-towers.
     is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
+    repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
 
 
 @dataclass(frozen=True)
@@ -220,20 +221,44 @@ BUILDING_KIND_BY_TYPE: tuple[tuple[type[Building], str], ...] = (
 )
 
 
-@dataclass
+@dataclass(init=False)
 class GameState:
     """Mutable state and public operation entry point for one game run."""
 
     grid_map: GridMap
     gold: int = 180  # Current spendable gold; build, intel, and settlement change it.
     debt: int = 0  # Debt from overdraft/overload; interest is charged at wave end.
-    core_hp: int = 30  # Remaining core health; escaped enemies reduce it.
     elapsed_seconds: float = 0.0  # Authoritative logical clock, measured in seconds.
     buildings: list[Building] = field(default_factory=list)  # Current building entities.
     enemies: list[Enemy] = field(default_factory=list)  # Living enemies on the board.
     phase: GamePhase = field(default=GamePhase.DAY, init=False)
+    _core: Core = field(init=False, repr=False)
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        grid_map: GridMap,
+        gold: int = 180,
+        debt: int = 0,
+        core_hp: int = 30,
+        elapsed_seconds: float = 0.0,
+        buildings: list[Building] | None = None,
+        enemies: list[Enemy] | None = None,
+    ) -> None:
+        """Keep the existing constructor while storing core HP on the core.
+
+        A custom initializer lets core_hp remain a compatibility property
+        rather than a second mutable health counter.
+        """
+        self.grid_map = grid_map
+        self.gold = gold
+        self.debt = debt
+        self.elapsed_seconds = elapsed_seconds
+        self.buildings = buildings if buildings is not None else []
+        self.enemies = enemies if enemies is not None else []
+        self.phase = GamePhase.DAY
+        self.__post_init__(core_hp)
+
+    def __post_init__(self, core_hp: int = 30) -> None:
         """Initialize runtime collaborators, wave state, the core, and power.
 
         Attributes such as `power_grid`, `waves`, and `wave_index` are derived
@@ -252,10 +277,24 @@ class GameState:
         self.result_message = ""
         self.latest_power_report = PowerReport(0, 0, 0, 1.0)
         core = Core(self._next_id(), self.grid_map.core_position)
+        self._core = core
+        # Custom starting health may exceed the default in scenarios/tests.
+        core.max_hp = max(core.max_hp, core_hp)
+        self.core_hp = core_hp
         # Match the map's reservation, including custom core dimensions.
         core.footprint = self.grid_map.core_footprint
         self._add_building(core)
         self.recalculate_power()
+
+    @property
+    def core_hp(self) -> int:
+        """Expose core health without duplicating the core entity's state."""
+        return self._core.hp
+
+    @core_hp.setter
+    def core_hp(self, value: int) -> None:
+        """Preserve existing core_hp assignments used by scenarios and tests."""
+        self._core.current_hp = value
 
     @property
     def is_finished(self) -> bool:
@@ -406,6 +445,7 @@ class GameState:
             damage=tower.damage if tower is not None else None,
             cooldown_remaining=tower.cooldown_remaining if tower is not None else None,
             is_overloaded=tower.is_overloaded if tower is not None else False,
+            repair_cost=building.repair_cost,
         )
 
     def _building_kind(self, building: Building) -> str:
@@ -523,6 +563,44 @@ class GameState:
         self._add_building(building)
         self.recalculate_power()
         return building
+
+    def repair_building(self, building_id: int) -> int:
+        """Pay gold to instantly restore any existing building to full HP.
+
+        Each missing HP costs one gold. DAY and NIGHT both allow repairs,
+        including recovery of zero-HP non-core buildings left on the map.
+        Returns the gold spent and refreshes power immediately on success.
+        Overload timers, debt, and settlement service markers are unchanged.
+
+        Raises ValueError for a non-positive/non-integer ID (including bool),
+        missing building, full health, insufficient gold, destroyed core, or
+        ended game. Rejected calls leave all state unchanged. Repairing a
+        destroyed core cannot undo defeat, even before the next step().
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot repair after the game has ended.")
+        if (
+            isinstance(building_id, bool)
+            or not isinstance(building_id, int)
+            or building_id <= 0
+        ):
+            raise ValueError("Building ID must be a positive integer.")
+        building = next(
+            (building for building in self.buildings if building.id == building_id),
+            None,
+        )
+        if building is None:
+            raise ValueError(f"Building not found: {building_id}")
+        cost = building.repair_cost
+        if cost == 0:
+            raise ValueError("Building is already at full health.")
+        if self.gold < cost:
+            raise ValueError(f"Not enough gold. Need {cost}, have {self.gold}.")
+
+        self.gold -= cost
+        building.repair()
+        self.recalculate_power()
+        return cost
 
     def buy_wave_intel(self) -> str:
         """Spend 8 gold and return the current wave briefing.
@@ -664,8 +742,8 @@ class GameState:
             markers are cleared, `wave_index` advances, and the runner is
             cleared. Other nights return to DAY for unlimited planning; the
             final wave's settlement records VICTORY. Defeat is handled by
-            `step()` and cannot be settled. Wave settlement clears repair
-            markers but does not yet restore damaged building HP.
+            `step()` and cannot be settled. Wave settlement clears overload
+            service markers but does not restore HP; use repair_building().
         """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot settle a wave after the game has ended.")
@@ -877,7 +955,7 @@ class GameState:
                 escaped.append(enemy)
 
         for enemy in escaped:
-            self.core_hp -= enemy.damage_to_core
+            self._core.take_damage(enemy.damage_to_core)
 
         self.enemies = [enemy for enemy in self.enemies if enemy not in escaped]
 

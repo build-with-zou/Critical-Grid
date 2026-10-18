@@ -29,7 +29,7 @@ class Building:
     name: str  # Player-facing display name.
     position: Position  # Top-left anchor in small-cell coordinates.
     cost: int  # One-time gold cost paid when building.
-    max_hp: int  # Prototype max health, in integer hit points.
+    max_hp: int  # Maximum health shared by every building type, including core.
     current_hp: int | None = None  # Mutable health; initialized from max_hp.
     power_supply: int = 0  # Power supply counted after grid connection.
     power_draw: int = 0  # Power demand counted after grid connection.
@@ -42,6 +42,7 @@ class Building:
     # when introducing different dimensions; placement/power use it directly.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
     TRANSMITS_POWER: ClassVar[bool] = False
+    REPAIR_GOLD_PER_HP: ClassVar[int] = 1
 
     def __post_init__(self) -> None:
         self.footprint = self.FOOTPRINT
@@ -71,7 +72,7 @@ class Building:
 
     @property
     def hp(self) -> int:
-        """Return current building health, clamped between zero and max HP."""
+        """Return the building's current health."""
         assert self.current_hp is not None
         return self.current_hp
 
@@ -85,6 +86,23 @@ class Building:
         if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
             raise ValueError("Building damage must be a positive integer.")
         self.current_hp = max(0, self.hp - amount)
+
+    @property
+    def repair_cost(self) -> int:
+        """Quote a full repair at one gold per missing hit point."""
+        return max(0, self.max_hp - self.hp) * self.REPAIR_GOLD_PER_HP
+
+    def repair(self) -> int:
+        """Restore missing health and return HP restored, including from zero.
+
+        This entity operation does not charge gold or clear overload service
+        markers. Player commands must use GameState.repair_building(), which
+        validates the game state, charges gold, and refreshes power.
+        """
+        restored = max(0, self.max_hp - self.hp)
+        if restored:
+            self.current_hp = self.max_hp
+        return restored
 
     @property
     def is_power_source(self) -> bool:
@@ -142,7 +160,7 @@ class Mine(Building):
 
     def collect_income(self) -> int:
         """Calculate one income payout from current efficiency, rounded to gold."""
-        return round(self.income * self.efficiency)
+        return 0 if self.is_destroyed else round(self.income * self.efficiency)
 
 
 @dataclass
@@ -221,7 +239,12 @@ class Tower(Building):
 
     def can_attack(self) -> bool:
         """Return whether the tower satisfies the basic attack conditions."""
-        return self.connected_to_grid and self.efficiency > 0 and self.cooldown_remaining <= 0
+        return (
+            not self.is_destroyed
+            and self.connected_to_grid
+            and self.efficiency > 0
+            and self.cooldown_remaining <= 0
+        )
 
     def current_damage(self) -> float:
         """Compute single-hit damage after efficiency and overload modifiers."""

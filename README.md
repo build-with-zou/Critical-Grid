@@ -35,8 +35,9 @@ frontends can render the same source of truth.
 The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
 power nodes using a six-world-unit coverage radius; ordinary buildings do not
-relay power. Power nodes now have mutable health and saboteurs can attack them;
-other building damage and dynamic routing are still pending. Treat the code as the
+relay power. Every building has mutable health and supports gold-funded repair;
+saboteurs currently attack only power nodes. Other enemy building targets and
+dynamic routing are still pending. Treat the code as the
 behavioral source of truth when changing the prototype; use the design document
 for planned features and unresolved rules.
 
@@ -218,6 +219,57 @@ logical time zero. Invalid durations are rejected in every phase, including
 DAY and terminal phases. Negative, non-finite, boolean, string, and
 unrepresentably large values raise `ValueError` without changing state.
 
+## Building Health and Repair
+
+Every building, including the core, stores `max_hp` and `current_hp` and exposes
+`hp`, `is_destroyed`, `take_damage(amount)`, `repair_cost`, and `repair()`.
+`take_damage()` accepts positive integers (excluding booleans) and clamps HP
+at zero. The entity-level `repair()` restores full health and returns the HP
+restored; it does not charge gold. Presentation code must use the game command
+below rather than calling entity methods or assigning health directly.
+
+```python
+building = game.cell_snapshot(selected_position).building
+if building is not None:
+    # Show building.hp, building.max_hp and building.repair_cost in the GUI.
+    try:
+        gold_spent = game.repair_building(building.id)
+    except ValueError as error:
+        print(error)
+```
+
+- `repair_building(building_id) -> int` repairs the entire building instantly
+  and returns the gold spent. Each missing HP costs **1 gold**; partial repairs
+  and repair timers are not implemented. DAY and NIGHT both allow repairs.
+- The ID must be a positive integer, excluding booleans. Missing/demolished
+  buildings, full-health buildings, insufficient gold, a destroyed core, and
+  ended games raise `ValueError` without changing state. There is no partial
+  payment or repair when gold is insufficient.
+- Zero-HP non-core buildings remain on the map and can be repaired through the
+  same command, preserving their IDs and footprints. Successful repairs
+  immediately recalculate power: restoring a node can reconnect downstream
+  buildings, and restoring a plant can restore its supply. Damaged-but-living
+  buildings do not yet suffer an HP-based efficiency penalty.
+- `BuildingSnapshot` adds an optional `repair_cost` field (default `0` for
+  manually constructed snapshots). Runtime snapshots always quote the full
+  HP repair cost, even when the command is unavailable due to game state or
+  insufficient gold. Existing `hp` and `max_hp` fields show actual health.
+- Core health now lives on the `Core` entity. `GameState(..., core_hp=30)` and
+  existing `core_hp` reads/assignments remain supported as a property over that
+  same value. Custom starting HP above 30 raises the core's maximum to that
+  starting value. Enemy arrivals, repairs, the status HUD, and building
+  snapshots all use the same health. Zero core HP prevents repair even before
+  `step()` records DEFEAT.
+- HP repair leaves tower cooldowns, overload duration, debt and `needs_repair`
+  unchanged. That existing flag is an **overload service fee**: settlement
+  still charges 5 gold per flagged building and clears the flag without
+  restoring HP. Buying HP repair does not cancel that fee.
+
+The GUI has not gained a repair button in this change. It can read the selected
+building's snapshot fields and call `repair_building(building.id)`, displaying
+any `ValueError`. Enemy building attacks still target only power nodes; health
+and repair interfaces are ready for additional building targets.
+
 ## Emergency Commands
 
 - `core_overdraft(gold_amount=40)` accepts a positive integer, excluding
@@ -279,6 +331,7 @@ python3 -m unittest discover -s tests
 - Wave spawning.
 - Core overdraft.
 - Tower overload.
+- Shared building health and instant gold-funded repairs, including grid recovery.
 - Text-based map rendering.
 
 ## Next Steps
