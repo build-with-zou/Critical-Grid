@@ -7,9 +7,10 @@ independent instances from string templates. `WaveRunner` calls
 targets, applies damage, and settles rewards, and `TextRenderer` only reads
 their current positions.
 
-Enemies in the current prototype only move along `GridMap.route`. They do not
-actively attack buildings or change routes. `path_progress` is physical
-distance along the centerline, in small-cell world units, not waypoint indices.
+Enemies move along `GridMap.route`. Saboteurs can also attack power nodes when
+they enter their attack range; they do not yet change routes or attack other
+building types. `path_progress` is physical distance along the centerline, in
+small-cell world units, not waypoint indices.
 """
 
 from __future__ import annotations
@@ -32,6 +33,10 @@ class Enemy:
     path_progress: float = 0.0  # Continuous progress from the route start.
     hp: float = 0.0  # Current health; non-positive values are reset to full.
     slow_seconds_remaining: float = 0.0  # Logical seconds of slow remaining.
+    attack_range: float = 0.0  # World-unit range for building attacks.
+    attack_damage: int = 0  # Damage per building attack.
+    attack_cooldown_seconds: float = 1.0  # Interval between building attacks.
+    attack_cooldown_remaining: float = 0.0  # Time until the next building attack.
 
     def __post_init__(self) -> None:
         """Ensure template-created enemies start at full health by default."""
@@ -59,6 +64,25 @@ class Enemy:
     def apply_slow(self, seconds: float) -> None:
         """Apply slow, keeping the longer remaining duration on repeated hits."""
         self.slow_seconds_remaining = max(self.slow_seconds_remaining, seconds)
+
+    @property
+    def can_attack_buildings(self) -> bool:
+        """Return whether this enemy has a ready building attack."""
+        return (
+            self.attack_damage > 0
+            and self.attack_range > 0
+            and self.attack_cooldown_remaining <= 0
+        )
+
+    def tick_attack_cooldown(self, seconds: float) -> None:
+        """Advance the building-attack cooldown without going below zero."""
+        self.attack_cooldown_remaining = max(
+            0.0, self.attack_cooldown_remaining - seconds
+        )
+
+    def reset_attack_cooldown(self) -> None:
+        """Start the next building-attack interval after a successful attack."""
+        self.attack_cooldown_remaining = self.attack_cooldown_seconds
 
     def advance(self, seconds: float) -> None:
         """Advance along the route at current speed and tick down slow time.
@@ -100,7 +124,16 @@ def create_enemy(kind: str) -> Enemy:
         "basic": Enemy("Basic", max_hp=10, speed=0.75 * LEGACY_TILE_SIZE, damage_to_core=1, reward=4),
         "fast": Enemy("Fast", max_hp=7, speed=1.25 * LEGACY_TILE_SIZE, damage_to_core=1, reward=5),
         "armored": Enemy("Armored", max_hp=24, speed=0.45 * LEGACY_TILE_SIZE, damage_to_core=2, reward=8),
-        "saboteur": Enemy("Saboteur", max_hp=14, speed=0.85 * LEGACY_TILE_SIZE, damage_to_core=2, reward=7),
+        "saboteur": Enemy(
+            "Saboteur",
+            max_hp=14,
+            speed=0.85 * LEGACY_TILE_SIZE,
+            damage_to_core=2,
+            reward=7,
+            attack_range=6.0,
+            attack_damage=1,
+            attack_cooldown_seconds=1.0,
+        ),
     }
 
     try:
@@ -114,5 +147,8 @@ def create_enemy(kind: str) -> Enemy:
         speed=template.speed,
         damage_to_core=template.damage_to_core,
         reward=template.reward,
+        attack_range=template.attack_range,
+        attack_damage=template.attack_damage,
+        attack_cooldown_seconds=template.attack_cooldown_seconds,
     )
 

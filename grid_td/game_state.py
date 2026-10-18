@@ -13,7 +13,8 @@ Key state-flow boundaries:
 * New games start in DAY with no active wave runner.
 * `start_next_wave()` ends planning and creates a fresh NIGHT runner.
 * During NIGHT, `step()` spawns enemies, recalculates power, runs tower
-  attacks, then moves enemies. During DAY it leaves simulation time frozen.
+  attacks, moves enemies, then lets saboteurs attack power nodes. During DAY
+  it leaves simulation time frozen.
 * `end_wave()` settles income, interest, and repairs, then enters the next
   DAY or records VICTORY. Core destruction records DEFEAT immediately.
 
@@ -663,8 +664,8 @@ class GameState:
             markers are cleared, `wave_index` advances, and the runner is
             cleared. Other nights return to DAY for unlimited planning; the
             final wave's settlement records VICTORY. Defeat is handled by
-            `step()` and cannot be settled. This does not restore
-            building HP because `Building.hp` is not mutable in the prototype.
+            `step()` and cannot be settled. Wave settlement clears repair
+            markers but does not yet restore damaged building HP.
         """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot settle a wave after the game has ended.")
@@ -718,9 +719,10 @@ class GameState:
                 calls leave the game state unchanged.
 
         Order:
-            Spawn due enemies first, recalculate power, run tower attacks, and
-            finally advance enemies. This lets towers respond to newly spawned
-            enemies in the same step, while enemies do not move before attacks.
+            Spawn due enemies first, recalculate power, run tower attacks,
+            advance enemies, and finally let saboteurs attack power nodes. This
+            lets towers respond to newly spawned enemies while node attacks use
+            the enemies' updated positions.
 
         Side effects:
             Changes the shared logical clock, wave runner state, building
@@ -766,6 +768,9 @@ class GameState:
         self.recalculate_power()
         self._towers_attack(delta)
         self._advance_enemies(delta)
+        if self.core_hp > 0:
+            self._enemies_attack_nodes(delta)
+            self.recalculate_power()
 
         if self.core_hp <= 0:
             self.core_hp = 0
@@ -875,4 +880,48 @@ class GameState:
             self.core_hp -= enemy.damage_to_core
 
         self.enemies = [enemy for enemy in self.enemies if enemy not in escaped]
+
+    def _enemies_attack_nodes(self, seconds: float) -> None:
+        """Let ready saboteurs damage the nearest living node in range.
+
+        Saboteurs remain on the fixed route in this prototype. Their attack
+        range uses the same Manhattan distance policy as tower targeting, and
+        each saboteur can perform at most one node attack per simulation step.
+        Destroyed nodes remain on the map with zero HP but stop transmitting
+        power during the following recalculation.
+        """
+        nodes = [
+            building
+            for building in self.buildings
+            if isinstance(building, PowerNode) and not building.is_destroyed
+        ]
+        for enemy in self.enemies:
+            enemy.tick_attack_cooldown(seconds)
+
+        if not nodes:
+            return
+
+        for enemy in self.enemies:
+            if not enemy.can_attack_buildings:
+                continue
+
+            enemy_position = enemy.world_position_on_route(self.grid_map.path)
+            target = min(
+                (
+                    node
+                    for node in nodes
+                    if world_distance(enemy_position, node.center) <= enemy.attack_range
+                ),
+                key=lambda node: world_distance(enemy_position, node.center),
+                default=None,
+            )
+            if target is None:
+                continue
+
+            target.take_damage(enemy.attack_damage)
+            enemy.reset_attack_cooldown()
+            if target.is_destroyed:
+                nodes.remove(target)
+                if not nodes:
+                    return
 
