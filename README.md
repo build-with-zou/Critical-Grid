@@ -21,8 +21,9 @@ main.py
 ```
 
 `GameState.step(seconds)` is the simulation boundary. Each NIGHT step spawns due
-enemies, recalculates power, lets connected towers attack, then advances
-enemies toward the core. Wave settlement is separate: `end_wave()` applies
+enemies, recalculates power, lets connected towers attack, advances enemies,
+then lets saboteurs attack power nodes. Wave settlement is separate:
+`end_wave()` applies
 mine income, debt interest, and repair costs, while `start_next_wave()` creates
 the next spawn runner.
 
@@ -34,8 +35,8 @@ frontends can render the same source of truth.
 The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
 power nodes using a six-world-unit coverage radius; ordinary buildings do not
-relay power. The demo contains four waves, routing is fixed, and building
-health/damage is not yet modeled as mutable state. Treat the code as the
+relay power. Power nodes now have mutable health and saboteurs can attack them;
+other building damage and dynamic routing are still pending. Treat the code as the
 behavioral source of truth when changing the prototype; use the design document
 for planned features and unresolved rules.
 
