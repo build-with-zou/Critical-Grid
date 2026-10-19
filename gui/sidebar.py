@@ -11,6 +11,7 @@ from grid_td.position import Position
 from gui.styles import (
     BUILD_KINDS,
     CHARGED_COLOR,
+    LIMITED_COLOR,
     MUTED,
     PANEL,
     PANEL_LEFT,
@@ -98,9 +99,9 @@ class Sidebar:
             color = MUTED
             if index == 1 and building is not None:
                 color = (
-                    CHARGED_COLOR
-                    if building.connected_to_grid and building.efficiency > 0
-                    else UNCHARGED_COLOR
+                    UNCHARGED_COLOR if not building.connected_to_grid
+                    else LIMITED_COLOR if building.efficiency < 1
+                    else CHARGED_COLOR
                 )
             self._text(line, PANEL_LEFT + 16, 485 + index * 22, color)
 
@@ -121,8 +122,7 @@ class Sidebar:
         coordinate = f"({position.x}, {position.y})"
         if building is not None:
             hp = snapshot.status.core_hp if building.kind == "core" else building.hp
-            charged = building.connected_to_grid and building.efficiency > 0
-            power = "CHARGED" if charged else "NOT CHARGED"
+            grid = "CONNECTED" if building.connected_to_grid else "OFF GRID"
             if building.range is not None:
                 if not building.connected_to_grid:
                     detail = "Connect to the core to attack."
@@ -145,7 +145,7 @@ class Sidebar:
                 )
             return (
                 f"{coordinate}  {building.name}  HP {hp}/{building.max_hp}",
-                f"Power: {power}  Eff {building.efficiency:.0%}",
+                f"Grid: {grid}  Output {building.efficiency:.0%}",
                 detail,
             )
 
