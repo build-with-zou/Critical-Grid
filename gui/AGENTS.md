@@ -36,8 +36,7 @@ These instructions apply to work on the Critical-Grid GUI.
 
 ## Current GUI coverage
 
-- The GUI now fits the 36-by-21 map, draws building footprints and continuous enemy positions from snapshots, uses `preview_build()` for hover feedback, and returns to DAY after each settled night. It provides Start Night, Run/Pause, one-second stepping, building placement, tower demolition, and keyboard tower overload.
-- `buy_wave_intel()` and `core_overdraft()` exist in the core but have no GUI controls yet. This is a presentation gap, distinct from the missing structured intelligence and debt rules above.
+- The GUI now fits the 36-by-21 map, draws building footprints and continuous enemy positions from snapshots, uses `preview_build()` for hover feedback, and returns to DAY after each settled night. It provides Start Night, Run/Pause, one-second stepping, building placement, tower demolition, keyboard tower overload, wave intel, and core overdraft controls.
 - The GUI draws enemies at short fixed logical steps rather than reconstructing attacks from mutable objects. Accurate attack beams and persistent enemy interpolation remain blocked by the missing snapshot IDs/events noted above.
 
 ## Change scope

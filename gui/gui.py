@@ -115,6 +115,37 @@ class CriticalGridGUI:
             self._cancel_build()
         elif button == self.sidebar.demolish_button:
             self._demolish_selected_tower()
+        elif button == self.sidebar.intel_button:
+            self._buy_wave_intel()
+        elif button == self.sidebar.overdraft_button:
+            self._take_core_overdraft()
+
+    def _buy_wave_intel(self) -> None:
+        """Buy the core's current-wave briefing and report the actual charge."""
+        self._cancel_build()
+        before = self.game.snapshot().status
+        try:
+            briefing = self.game.buy_wave_intel()
+        except ValueError as error:
+            self.message = str(error)
+        else:
+            spent = before.gold - self.game.snapshot().status.gold
+            self.message = f"Wave intel (-{spent} gold): {briefing}" if spent else briefing
+
+    def _take_core_overdraft(self) -> None:
+        """Apply the default core overdraft and report its resource changes."""
+        self._cancel_build()
+        before = self.game.snapshot().status
+        try:
+            self.game.core_overdraft()
+        except ValueError as error:
+            self.message = str(error)
+        else:
+            after = self.game.snapshot().status
+            self.message = (
+                f"Core overdraft: +{after.gold - before.gold} gold, "
+                f"+{after.debt - before.debt} debt."
+            )
 
     def _cancel_build(self) -> None:
         """Leave construction mode without changing the inspected cell."""
