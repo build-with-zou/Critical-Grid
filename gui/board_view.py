@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pygame
 
 from grid_td.game_state import BuildPreview, BuildingSnapshot, GameSnapshot
@@ -35,6 +37,11 @@ class BoardView:
         self.font = font
         self.small_font = pygame.font.SysFont("arial", 12, bold=True)
         self.legend_font = pygame.font.SysFont("arial", 14)
+        core_path = Path(__file__).resolve().parent / "assets" / "buildings" / "core.png"
+        self.core_sprite = (
+            pygame.transform.scale(pygame.image.load(str(core_path)).convert_alpha(), (48, 48))
+            if core_path.is_file() else None
+        )
 
     def position_at(
         self, mouse_pos: tuple[int, int], snapshot: GameSnapshot
@@ -140,8 +147,13 @@ class BoardView:
         """Draw each building once despite its presence in several board cells."""
         for building in buildings.values():
             rect = self._building_rect(building)
-            color = SYMBOL_COLORS.get(building.symbol, (156, 174, 188))
-            pygame.draw.rect(self.screen, color, rect.inflate(-8, -8), border_radius=5)
+            if building.kind == "core" and self.core_sprite is not None:
+                self.screen.blit(
+                    self.core_sprite, self.core_sprite.get_rect(center=rect.center)
+                )
+            else:
+                color = SYMBOL_COLORS.get(building.symbol, (156, 174, 188))
+                pygame.draw.rect(self.screen, color, rect.inflate(-8, -8), border_radius=5)
             # Connectivity and available output are separate snapshot facts.
             if not building.connected_to_grid:
                 ring, status = UNCHARGED_COLOR, "OFF"
@@ -155,8 +167,9 @@ class BoardView:
                     self.screen, (250, 226, 139), rect.inflate(-1, -1), 2,
                     border_radius=6,
                 )
-            symbol = self.font.render(building.symbol, True, BACKGROUND)
-            self.screen.blit(symbol, symbol.get_rect(center=rect.center))
+            if building.kind != "core" or self.core_sprite is None:
+                symbol = self.font.render(building.symbol, True, BACKGROUND)
+                self.screen.blit(symbol, symbol.get_rect(center=rect.center))
             if status:
                 badge = self.small_font.render(status, True, ring)
                 self.screen.blit(badge, badge.get_rect(midbottom=(rect.centerx, rect.bottom - 4)))
