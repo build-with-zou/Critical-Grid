@@ -148,6 +148,8 @@ class BoardView:
         for building in buildings.values():
             rect = self._building_rect(building)
             if building.kind == "core" and self.core_sprite is not None:
+                # The transparent core art needs a solid backing over map grid lines.
+                pygame.draw.rect(self.screen, GROUND, rect)
                 self.screen.blit(
                     self.core_sprite, self.core_sprite.get_rect(center=rect.center)
                 )
