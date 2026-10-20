@@ -43,11 +43,11 @@ These instructions apply to work on the Critical-Grid GUI.
 
 ## Sprite art and previews
 
-- Keep building sprites legible at the current 3-by-3-cell, 54-by-54-pixel footprint. New building candidates use a 48-by-48-pixel transparent canvas and leave a small margin inside the footprint. The original `core.png` is a 24-by-24-pixel legacy sprite scaled to 48-by-48 pixels until a newer candidate is selected.
+- Keep building sprites legible at the current 3-by-3-cell, 54-by-54-pixel footprint. New building candidates use a 48-by-48-pixel transparent canvas and leave a small margin inside the footprint. The GUI currently selects `core-v2.png`, `mine-v1.png`, and `gun-tower-v2.png` by snapshot building kind.
 - Use a consistent top-down, slightly raised view, dark outlines, restrained engineering-console colors, and a clear silhouette for each building role. Prefer readable machinery over tiny decorative detail.
 - Save editable LibreSprite sources beside their transparent PNG exports under `gui/assets/buildings/`. Keep review previews under `gui/assets/previews/`; scale pixel art for review with nearest-neighbor sampling.
-- Do not bake terrain grid lines, status rings, selection borders, HP bars, labels, or other snapshot-dependent UI into a sprite. Render those states separately in the GUI. The core omits its normal green power ring, while `LOW` and `OFF` warnings remain visible.
-- Show sprites in previews against a uniform dark ground color without gray map grid lines. The core's transparent pixels also need a solid ground backing in the game so the map grid does not show through them.
+- Do not bake terrain grid lines, status rings, selection borders, HP bars, labels, or other snapshot-dependent UI into a sprite. Render those states separately in the GUI. Imported sprites omit the normal green power ring, while `LOW` and `OFF` warnings remain visible.
+- Show sprites in previews against a uniform dark ground color without gray map grid lines. Imported sprites also need a terrain-colored backing in the game so the map grid does not show through transparent pixels.
 
 ## Change scope
 
