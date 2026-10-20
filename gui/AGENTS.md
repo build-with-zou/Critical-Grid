@@ -41,6 +41,14 @@ These instructions apply to work on the Critical-Grid GUI.
 - The GUI shows selected building HP but has no HP repair button or repair-cost display yet. Use `repair_building(id)` through `GameState` when adding that control; distinguish HP repair from the overload service marker.
 - The GUI draws enemies at short fixed logical steps rather than reconstructing attacks from mutable objects. Accurate attack beams and persistent enemy interpolation remain blocked by the missing snapshot IDs/events noted above.
 
+## Sprite art and previews
+
+- Keep building sprites legible at the current 3-by-3-cell, 54-by-54-pixel footprint. New building candidates use a 48-by-48-pixel transparent canvas and leave a small margin inside the footprint. The original `core.png` is a 24-by-24-pixel legacy sprite scaled to 48-by-48 pixels until a newer candidate is selected.
+- Use a consistent top-down, slightly raised view, dark outlines, restrained engineering-console colors, and a clear silhouette for each building role. Prefer readable machinery over tiny decorative detail.
+- Save editable LibreSprite sources beside their transparent PNG exports under `gui/assets/buildings/`. Keep review previews under `gui/assets/previews/`; scale pixel art for review with nearest-neighbor sampling.
+- Do not bake terrain grid lines, status rings, selection borders, HP bars, labels, or other snapshot-dependent UI into a sprite. Render those states separately in the GUI. The core omits its normal green power ring, while `LOW` and `OFF` warnings remain visible.
+- Show sprites in previews against a uniform dark ground color without gray map grid lines. The core's transparent pixels also need a solid ground backing in the game so the map grid does not show through them.
+
 ## Change scope
 
 - Create, edit, move, or delete files only under `gui/` relative to the repository root.
