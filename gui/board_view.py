@@ -161,7 +161,11 @@ class BoardView:
                 ring, status = LIMITED_COLOR, "LOW"
             else:
                 ring, status = CHARGED_COLOR, ""
-            pygame.draw.rect(self.screen, ring, rect.inflate(-4, -4), 2, border_radius=6)
+            # Keep core warnings visible without framing its normal sprite in green.
+            if building.kind != "core" or status:
+                pygame.draw.rect(
+                    self.screen, ring, rect.inflate(-4, -4), 2, border_radius=6
+                )
             if building.id == selected_tower_id:
                 pygame.draw.rect(
                     self.screen, (250, 226, 139), rect.inflate(-1, -1), 2,
