@@ -248,9 +248,17 @@ if building is not None:
 - Zero-HP non-core buildings remain on the map and can be repaired through the
   same command, preserving their IDs and footprints. Successful repairs
   immediately recalculate power: restoring a node can reconnect downstream
-  buildings, and restoring a plant can restore its supply. Damaged-but-living
-  buildings do not yet suffer an HP-based efficiency penalty.
-- `BuildingSnapshot` adds an optional `repair_cost` field (default `0` for
+  buildings, and restoring a plant can restore its supply.
+- Health condition uses ten-percent bands. `90%~100% HP` has condition
+  efficiency `100%`; below 90%, each lower band reduces it by 10 percentage
+  points (`80%~<90%` gives `90%`, `70%~<80%` gives `80%`, and so on); `0 HP`
+  gives `0%`. The exact band table is centralized in `Building` for balance
+  changes.
+- `PowerReport.efficiency` remains the shared electrical efficiency. Each
+  building's `Building.efficiency` is `PowerReport.efficiency ×
+  Building.health_efficiency`, and mines/towers use this final value.
+- `BuildingSnapshot` adds optional `repair_cost` and `health_efficiency` fields
+  (defaults `0` and `1.0` for
   manually constructed snapshots). Runtime snapshots always quote the full
   HP repair cost, even when the command is unavailable due to game state or
   insufficient gold. Existing `hp` and `max_hp` fields show actual health.
