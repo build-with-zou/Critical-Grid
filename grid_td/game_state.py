@@ -104,6 +104,7 @@ class BuildingSnapshot:
     is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
     repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
     target_enemy_id: int | None = None  # Manual target enemy ID; None for auto.
+    health_efficiency: float = 1.0  # Condition multiplier before power efficiency.
 
 
 @dataclass(frozen=True)
@@ -454,6 +455,7 @@ class GameState:
             is_overloaded=tower.is_overloaded if tower is not None else False,
             repair_cost=building.repair_cost,
             target_enemy_id=tower.target_enemy_id if tower is not None else None,
+            health_efficiency=building.health_efficiency,
         )
 
     def _building_kind(self, building: Building) -> str:
