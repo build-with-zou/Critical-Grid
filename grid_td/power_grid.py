@@ -7,10 +7,11 @@ then connects each consumer to its nearest reachable transmitter. The returned
 `PowerReport` is read by the status line and tests.
 
 Only the core, power plants, and power nodes are transmitters. A powered mine
-or tower cannot relay coverage to another building. Efficiency is still a
-shared multiplier for all connected buildings, with no per-building priority
-allocation. Any connectivity-rule change can affect towers, mines, wave
-difficulty, and rendered state at the same time.
+or tower cannot relay coverage to another building. The reported efficiency is
+the shared electrical multiplier; each building's stored efficiency additionally
+includes its own health-condition multiplier. There is no per-building power
+priority allocation. Any connectivity-rule change can affect towers, mines,
+wave difficulty, and rendered state at the same time.
 """
 
 from __future__ import annotations
@@ -74,7 +75,8 @@ class PowerGrid:
             A `PowerReport` that counts only buildings connected from the core.
 
         Side effects:
-            Overwrites each building's `connected_to_grid` and `efficiency`.
+            Overwrites each building's `connected_to_grid` and final
+            `efficiency` (electrical efficiency multiplied by health condition).
             Disconnected buildings are explicitly set to 0 efficiency. Callers
             should run this before reading tower or mine behavior.
         """
@@ -90,7 +92,10 @@ class PowerGrid:
 
         for index, building in enumerate(buildings):
             building.connected_to_grid = index in connected_indices
-            building.efficiency = efficiency if building.connected_to_grid else 0.0
+            building.efficiency = (
+                building.effective_efficiency(efficiency)
+                if building.connected_to_grid else 0.0
+            )
 
         return PowerReport(
             connected_count=len(connected_buildings),

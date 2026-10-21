@@ -102,6 +102,7 @@ class BuildingSnapshot:
     cooldown_remaining: float | None = None  # Tower cooldown; `None` for non-towers.
     is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
     repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
+    health_efficiency: float = 1.0  # Condition multiplier before power efficiency.
 
 
 @dataclass(frozen=True)
@@ -446,6 +447,7 @@ class GameState:
             cooldown_remaining=tower.cooldown_remaining if tower is not None else None,
             is_overloaded=tower.is_overloaded if tower is not None else False,
             repair_cost=building.repair_cost,
+            health_efficiency=building.health_efficiency,
         )
 
     def _building_kind(self, building: Building) -> str:

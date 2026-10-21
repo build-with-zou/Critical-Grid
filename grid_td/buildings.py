@@ -10,6 +10,7 @@ layer. `GameState` owns lifecycle, build cost, damage, and debt side effects;
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import floor
 from typing import ClassVar
 
 from grid_td.position import Footprint, LEGACY_TILE_SIZE, Position, WorldPosition
@@ -19,8 +20,8 @@ from grid_td.position import Footprint, LEGACY_TILE_SIZE, Position, WorldPositio
 class Building:
     """Base state shared by all buildings.
 
-    `efficiency` is the shared work multiplier from the latest power-grid
-    calculation, normally between 0 and 1. It is not building durability.
+    `efficiency` is the final work multiplier from the latest power-grid
+    calculation after electrical and health-condition factors are combined.
     Except for `Core`, buildings are normally created by `GameState.build()`
     and updated by `PowerGrid` during waves.
     """
@@ -43,6 +44,10 @@ class Building:
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
     TRANSMITS_POWER: ClassVar[bool] = False
     REPAIR_GOLD_PER_HP: ClassVar[int] = 1
+    # Health is divided into ten-percent bands. A building at 90% health or
+    # above keeps full condition efficiency; lower bands reduce it gradually.
+    FULL_HEALTH_EFFICIENCY_THRESHOLD: ClassVar[float] = 0.90
+    HEALTH_EFFICIENCY_BANDS: ClassVar[int] = 10
 
     def __post_init__(self) -> None:
         self.footprint = self.FOOTPRINT
@@ -103,6 +108,37 @@ class Building:
         if restored:
             self.current_hp = self.max_hp
         return restored
+
+    @property
+    def health_ratio(self) -> float:
+        """Return current health as a clamped ratio in the range 0..1."""
+        if self.max_hp <= 0:
+            return 0.0
+        return min(1.0, max(0.0, self.hp / self.max_hp))
+
+    @property
+    def health_efficiency(self) -> float:
+        """Return the condition multiplier applied before electrical efficiency.
+
+        The first 10% band (90% to 100% HP) is intentionally lossless. Below
+        that threshold each ten-percent band lowers condition efficiency by
+        0.1, while zero HP disables the building completely. Integer HP and
+        arbitrary max HP values are handled without assuming a fixed health
+        scale.
+        """
+        if self.hp <= 0:
+            return 0.0
+        if self.health_ratio >= self.FULL_HEALTH_EFFICIENCY_THRESHOLD:
+            return 1.0
+        # Below the lossless band, the interval [80%, 90%) maps to 0.9,
+        # [70%, 80%) maps to 0.8, and so on. The explicit +1 keeps an exact
+        # ten-percent boundary in the higher condition band.
+        band = floor(self.hp * self.HEALTH_EFFICIENCY_BANDS / self.max_hp) + 1
+        return min(1.0, band / self.HEALTH_EFFICIENCY_BANDS)
+
+    def effective_efficiency(self, electrical_efficiency: float) -> float:
+        """Combine power availability with condition efficiency."""
+        return max(0.0, electrical_efficiency) * self.health_efficiency
 
     @property
     def is_power_source(self) -> bool:
