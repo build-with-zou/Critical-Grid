@@ -270,6 +270,30 @@ building's snapshot fields and call `repair_building(building.id)`, displaying
 any `ValueError`. Enemy building attacks still target only power nodes; health
 and repair interfaces are ready for additional building targets.
 
+## Selling and Targeting
+
+Two command families extend the GUI-facing surface beyond build and repair.
+
+- `sell_building(building_id) -> int` removes any non-core building and refunds
+  `round(cost * 0.7)` gold, then refreshes the power grid. The core cannot be
+  sold. The ID must be a positive integer (booleans rejected). Missing
+  buildings, the core, a destroyed core, and ended games raise `ValueError`
+  without changing state. Overload service markers and debt are untouched.
+  The older `demolish_tower(building_id)` still removes a tower with no refund
+  and no terminal-phase guard.
+- `set_tower_target(tower_id, enemy_id) -> None` forces one tower to prefer a
+  specific living enemy. The manual target wins only while it stays alive and
+  inside the tower's range; otherwise the tower clears it and falls back to the
+  default furthest-progressing enemy. `clear_tower_target(tower_id)` removes the
+  manual target explicitly. Both validate positive-integer IDs (booleans
+  rejected) and raise `ValueError` for missing towers, dead/missing enemies, a
+  destroyed core, or an ended game, without changing state.
+
+Every active enemy now carries a stable runtime `id`, assigned by `GameState`
+when it spawns. `EnemySnapshot` exposes it as a required `id` field, and
+`BuildingSnapshot` exposes `target_enemy_id` (default `None`) for towers. Tools
+that construct these snapshots by hand must provide `EnemySnapshot.id`.
+
 ## Emergency Commands
 
 - `core_overdraft(gold_amount=40)` accepts a positive integer, excluding
