@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
+from typing import ClassVar
 
 from grid_td.buildings import (
     Building,
@@ -226,6 +227,9 @@ BUILDING_KIND_BY_TYPE: tuple[tuple[type[Building], str], ...] = (
 @dataclass(init=False)
 class GameState:
     """Mutable state and public operation entry point for one game run."""
+
+    # Fraction of build cost refunded by sell_building(); the core is never sold.
+    SELL_REFUND_RATIO: ClassVar[float] = 0.7
 
     grid_map: GridMap
     gold: int = 180  # Current spendable gold; build, intel, and settlement change it.
@@ -606,6 +610,53 @@ class GameState:
         building.repair()
         self.recalculate_power()
         return cost
+
+    def sell_building(self, building_id: int) -> int:
+        """Sell any non-core building and refund part of its build cost.
+
+        The core cannot be sold. Selling removes the building immediately,
+        refunds ``round(cost * SELL_REFUND_RATIO)`` gold, and recalculates power
+        so downstream buildings may disconnect. Towers, mines, power plants,
+        and power nodes are all sellable. Overload markers and debt are left
+        unchanged. Unlike ``demolish_tower()``, this command refunds gold and
+        rejects an ended game.
+
+        Args:
+            building_id: Positive integer ID of an existing non-core building.
+                Booleans and non-integers are rejected.
+
+        Returns:
+            The gold refunded to the player.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, the ID is
+                not a positive integer, the building does not exist, or the
+                target is the core. Rejected calls leave all state unchanged.
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot sell after the game has ended.")
+        if (
+            isinstance(building_id, bool)
+            or not isinstance(building_id, int)
+            or building_id <= 0
+        ):
+            raise ValueError("Building ID must be a positive integer.")
+        building = next(
+            (building for building in self.buildings if building.id == building_id),
+            None,
+        )
+        if building is None:
+            raise ValueError(f"Building not found: {building_id}")
+        if isinstance(building, Core):
+            raise ValueError("The core cannot be sold.")
+
+        refund = round(building.cost * self.SELL_REFUND_RATIO)
+        self.buildings = [
+            building for building in self.buildings if building.id != building_id
+        ]
+        self.gold += refund
+        self.recalculate_power()
+        return refund
 
     def buy_wave_intel(self) -> str:
         """Spend 8 gold and return the current wave briefing.
