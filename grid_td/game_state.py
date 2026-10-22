@@ -2,9 +2,9 @@
 
 `GameState` is the single runtime coordinator. It owns the map, gold/debt,
 buildings, enemies, core health, wave progress, and result state. It exposes
-operations for building, repair, intel, overdraft, overload, wave settlement, and each
-time step; `PowerGrid`, `WaveRunner`, `Building`, and `Enemy` provide the
-local rules it calls. Read-only presentation code should use `snapshot()`
+operations for building, selling, repair, targeting, intel, overdraft,
+overload, wave settlement, and each time step; `PowerGrid`, `WaveRunner`,
+`Building`, and `Enemy` provide the local rules it calls. Read-only presentation code should use `snapshot()`
 instead of reading mutable attributes directly.
 
 Key state-flow boundaries:
@@ -102,12 +102,14 @@ class BuildingSnapshot:
     cooldown_remaining: float | None = None  # Tower cooldown; `None` for non-towers.
     is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
     repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
+    target_enemy_id: int | None = None  # Manual target enemy ID; None for auto.
 
 
 @dataclass(frozen=True)
 class EnemySnapshot:
     """Read-only display contract for one active enemy."""
 
+    id: int  # Stable runtime ID used by command APIs such as set_tower_target().
     name: str  # Enemy type name.
     position: Position  # Small cell containing the continuous world position.
     hp: float  # Current health.
@@ -274,6 +276,7 @@ class GameState:
         # not start until the player explicitly ends the day.
         self.wave_runner: WaveRunner | None = None
         self.next_building_id = 1
+        self.next_enemy_id = 1
         self.result_message = ""
         self.latest_power_report = PowerReport(0, 0, 0, 1.0)
         core = Core(self._next_id(), self.grid_map.core_position)
@@ -446,6 +449,7 @@ class GameState:
             cooldown_remaining=tower.cooldown_remaining if tower is not None else None,
             is_overloaded=tower.is_overloaded if tower is not None else False,
             repair_cost=building.repair_cost,
+            target_enemy_id=tower.target_enemy_id if tower is not None else None,
         )
 
     def _building_kind(self, building: Building) -> str:
@@ -466,6 +470,7 @@ class GameState:
             position = world_position.cell
             grouped.setdefault(position, []).append(
                 EnemySnapshot(
+                    id=enemy.id,
                     name=enemy.name,
                     position=position,
                     hp=enemy.hp,
@@ -702,6 +707,71 @@ class GameState:
         tower.needs_repair = True
         self.debt += 10
 
+    def set_tower_target(self, tower_id: int, enemy_id: int) -> None:
+        """Force one tower to attack a specific enemy before auto-selection.
+
+        The manual target is honored only while it stays alive and inside the
+        tower's range; otherwise the tower clears it and falls back to automatic
+        target selection on its next attack.
+
+        Args:
+            tower_id: Positive integer ID of an existing tower. Booleans are
+                rejected.
+            enemy_id: Positive integer ID of an existing living enemy. Booleans
+                are rejected.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, either ID is
+                not a positive integer, the tower does not exist, or the enemy
+                does not exist or is already dead. Rejected calls leave all
+                state unchanged.
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot set a target after the game has ended.")
+        if (
+            isinstance(tower_id, bool)
+            or not isinstance(tower_id, int)
+            or tower_id <= 0
+        ):
+            raise ValueError("Tower ID must be a positive integer.")
+        if (
+            isinstance(enemy_id, bool)
+            or not isinstance(enemy_id, int)
+            or enemy_id <= 0
+        ):
+            raise ValueError("Enemy ID must be a positive integer.")
+        tower = self.find_tower(tower_id)
+        enemy = next(
+            (enemy for enemy in self.enemies if enemy.id == enemy_id and enemy.is_alive),
+            None,
+        )
+        if enemy is None:
+            raise ValueError(f"Enemy not found: {enemy_id}")
+        tower.target_enemy_id = enemy_id
+
+    def clear_tower_target(self, tower_id: int) -> None:
+        """Remove a tower's manual target so it resumes automatic selection.
+
+        Args:
+            tower_id: Positive integer ID of an existing tower. Booleans are
+                rejected.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, the ID is not
+                a positive integer, or the tower does not exist. Rejected calls
+                leave all state unchanged.
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot clear a target after the game has ended.")
+        if (
+            isinstance(tower_id, bool)
+            or not isinstance(tower_id, int)
+            or tower_id <= 0
+        ):
+            raise ValueError("Tower ID must be a positive integer.")
+        tower = self.find_tower(tower_id)
+        tower.target_enemy_id = None
+
     def start_next_wave(self) -> None:
         """End the current DAY and start the upcoming NIGHT.
 
@@ -841,7 +911,9 @@ class GameState:
         self.elapsed_seconds += delta
 
         if self.wave_runner is not None:
-            self.enemies.extend(self.wave_runner.step(delta))
+            for enemy in self.wave_runner.step(delta):
+                enemy.id = self._next_enemy_id()
+                self.enemies.append(enemy)
 
         self.recalculate_power()
         self._towers_attack(delta)
@@ -899,6 +971,12 @@ class GameState:
         self.next_building_id += 1
         return building_id
 
+    def _next_enemy_id(self) -> int:
+        """Allocate a monotonically increasing runtime enemy ID."""
+        enemy_id = self.next_enemy_id
+        self.next_enemy_id += 1
+        return enemy_id
+
     def _towers_attack(self, seconds: float) -> None:
         """Tick tower timers, run available attacks, and settle kill rewards.
 
@@ -930,7 +1008,11 @@ class GameState:
         self.enemies = [enemy for enemy in self.enemies if enemy.is_alive]
 
     def _select_target(self, tower: Tower) -> Enemy | None:
-        """Select the furthest-progressing living enemy within world-unit range.
+        """Select a target, preferring a valid manual target when set.
+
+        A manual target from ``set_tower_target()`` wins while it stays alive
+        and inside the tower's range. When it becomes invalid the tower clears
+        it and falls back to the furthest-progressing living enemy within range.
 
         Range starts at the building's geometric center and ends at the
         enemy's continuous centerline position. world_distance() is the single
@@ -938,6 +1020,23 @@ class GameState:
         path traversal. Dead enemies await reward cleanup but cannot absorb
         another tower's attack during this same simulation step.
         """
+        if tower.target_enemy_id is not None:
+            forced = next(
+                (
+                    enemy for enemy in self.enemies
+                    if enemy.id == tower.target_enemy_id
+                    and enemy.is_alive
+                    and world_distance(
+                        tower.center, enemy.world_position_on_route(self.grid_map.path)
+                    ) <= tower.range
+                ),
+                None,
+            )
+            if forced is not None:
+                return forced
+            # Drop a stale manual target so the tower can resume auto targeting.
+            tower.target_enemy_id = None
+
         targets = [
             enemy for enemy in self.enemies
             if enemy.is_alive and world_distance(
