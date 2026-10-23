@@ -30,6 +30,7 @@ class Enemy:
     speed: float  # World units per logical second when unslowed.
     damage_to_core: int  # Damage dealt to the core on reaching route end.
     reward: int  # Gold immediately awarded to GameState when defeated.
+    id: int = 0  # Runtime ID assigned by GameState when spawned; 0 means unassigned.
     path_progress: float = 0.0  # Continuous progress from the route start.
     hp: float = 0.0  # Current health; non-positive values are reset to full.
     slow_seconds_remaining: float = 0.0  # Logical seconds of slow remaining.

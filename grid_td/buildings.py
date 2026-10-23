@@ -226,6 +226,7 @@ class Tower(Building):
     cooldown_seconds: float = 1.0  # Base attack interval at 100% speed.
     cooldown_remaining: float = 0.0  # Logical seconds until the next attack.
     overload_seconds_remaining: float = 0.0  # Logical seconds of overload left.
+    target_enemy_id: int | None = None  # Manual target ID; None uses auto selection.
 
     @property
     def is_overloaded(self) -> bool:
