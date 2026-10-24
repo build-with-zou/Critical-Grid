@@ -321,9 +321,11 @@ that construct these snapshots by hand must provide `EnemySnapshot.id`.
   continuous position. Splash uses **50%** of the cannon's final damage and is
   not clipped to the tower's attack range. The primary target is not hit twice,
   and splash still resolves if the primary target dies from the direct hit.
-- Armored enemies have **25% damage reduction**. All damage routed through
-  `Enemy.take_damage()` is reduced, including cannon splash and slow-tower
-  damage. Other enemy templates have no reduction.
+- Armored enemies have **flat armor 2**. Every positive hit routed through
+  `Enemy.take_damage()` subtracts armor from the attack, applies a minimum of
+  **1 damage**, and clamps at zero. This applies to cannon direct hits, cannon
+  splash, and slow-tower damage; other enemy templates have armor 0.
+  `EnemySnapshot.armor` exposes the value for presentation.
 - Saboteurs attack power plants and power nodes while remaining on the fixed
   route. Within attack range, a power plant takes priority over a node; the
   nearest target wins within the same priority. Destroying a plant removes its
@@ -331,6 +333,10 @@ that construct these snapshots by hand must provide `EnemySnapshot.id`.
   power recalculation.
 - Power-node transmission remains full while the node is alive; health-based
   transmission degradation is still pending.
+- Deterministic strength baselines live in
+  `tests/test_combat_strength.py` (single tower vs enemy) and
+  `tests/test_combat_group_strength.py` (cannon splash vs a small group).
+  Update their expected time-to-kill and shot counts when balance changes.
 
 ## Emergency Commands
 
@@ -409,7 +415,7 @@ python3 -m unittest discover -s tests
 
 - 36 by 21 small-cell map with configurable rectangular building footprints.
 - Fixed enemy route with continuous world-space movement and four enemy types,
-  including armored damage reduction.
+  including flat armor on armored enemies.
 - Buildable mines, power plants, power nodes, and three tower types, including
   cannon splash damage.
 - Radius-based power-grid connection and shared efficiency.
