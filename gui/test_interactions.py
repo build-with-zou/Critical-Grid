@@ -14,7 +14,7 @@ import pygame
 
 from grid_td.buildings import GunTower, PowerPlant
 from grid_td.enemies import create_enemy
-from grid_td.game_state import GameState
+from grid_td.game_state import GamePhase, GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.gui import CriticalGridGUI
@@ -245,6 +245,101 @@ class BuildingInteractionTest(unittest.TestCase):
         self.click_cell(Position(27, 0))
         self.gui._begin_targeting()
         self.click_enemy()
+        self.gui.run(max_frames=2)
+
+    def test_speed_buttons_scale_elapsed_time_with_fixed_logic_steps(self) -> None:
+        for button, multiplier in self.gui.sidebar.speed_buttons.items():
+            with self.subTest(multiplier=multiplier):
+                self.gui.game = GameState(create_demo_map())
+                self.gui._handle_button(self.gui.sidebar.run_button)
+                self.gui._handle_button(button)
+                self.gui._update_simulation(0.2)
+                self.assertAlmostEqual(
+                    self.gui.game.snapshot().status.elapsed_seconds, 0.2 * multiplier,
+                )
+
+    def test_build_bullet_time_resumes_preferred_speed_after_cancel(self) -> None:
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui._set_speed(2.0)
+        build_button = next(
+            button for button, kind in self.gui.sidebar.build_buttons.items() if kind == "power_node"
+        )
+        self.gui._handle_button(build_button)
+        self.assertEqual(self.gui._effective_speed(self.gui.game.snapshot()), 0.25)
+        self.gui._update_simulation(0.4)
+        self.assertAlmostEqual(self.gui.game.snapshot().status.elapsed_seconds, 0.1)
+        self.gui._cancel_build()
+        self.assertEqual(self.gui._effective_speed(self.gui.game.snapshot()), 2.0)
+        self.gui._update_simulation(0.1)
+        self.assertAlmostEqual(self.gui.game.snapshot().status.elapsed_seconds, 0.3)
+
+    def test_repair_focus_bullet_time_ends_after_successful_repair(self) -> None:
+        plant = PowerPlant(50, Position(30, 6))
+        plant.take_damage(1)
+        self.gui.game = GameState(create_demo_map(), buildings=[plant])
+        self.gui._set_speed(2.0)
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.click_cell(plant.position)
+        self.gui._update_simulation(0.2)
+        self.assertAlmostEqual(self.gui.game.snapshot().status.elapsed_seconds, 0.05)
+        self.gui._repair_selected_building()
+        self.assertEqual(self.gui._effective_speed(self.gui.game.snapshot()), 2.0)
+
+    def test_pause_and_day_never_accumulate_catch_up_time(self) -> None:
+        self.gui._set_speed(2.0)
+        self.gui._update_simulation(5.0)
+        self.assertEqual(self.gui.game.snapshot().status.elapsed_seconds, 0.0)
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui._update_simulation(5.0)
+        self.assertEqual(self.gui.simulation_accumulator, 0.0)
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui._update_simulation(0.1)
+        self.assertAlmostEqual(self.gui.game.snapshot().status.elapsed_seconds, 0.2)
+
+    def test_step_pauses_and_advances_one_logical_second_at_any_speed(self) -> None:
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui._set_speed(2.0)
+        self.gui._handle_button(self.gui.sidebar.step_button)
+        self.assertAlmostEqual(self.gui.game.snapshot().status.elapsed_seconds, 1.0)
+        self.assertFalse(self.gui.running)
+        self.gui._update_simulation(1.0)
+        self.assertAlmostEqual(self.gui.game.snapshot().status.elapsed_seconds, 1.0)
+
+    def test_wave_settlement_returns_to_day_without_starting_another_night(self) -> None:
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui._set_speed(2.0)
+        for _ in range(400):
+            self.gui._update_simulation(0.25)
+            if self.gui.game.snapshot().status.phase != GamePhase.NIGHT:
+                break
+        snapshot = self.gui.game.snapshot()
+        self.assertEqual(snapshot.status.phase, GamePhase.DAY)
+        self.assertEqual(snapshot.status.wave_index, 1)
+        self.assertFalse(self.gui.running)
+        self.assertEqual(self.gui.simulation_accumulator, 0.0)
+        self.gui._update_simulation(10.0)
+        self.assertEqual(self.gui.game.snapshot(), snapshot)
+
+    def test_defeat_stops_time_and_rejects_building_actions(self) -> None:
+        enemy = create_enemy("basic")
+        enemy.id = 90
+        enemy.path_progress = 35.0
+        self.gui.game = GameState(create_demo_map(), core_hp=1, enemies=[enemy])
+        self.click_cell(Position(30, 3))
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui._update_simulation(5.0)
+        snapshot = self.gui.game.snapshot()
+        self.assertEqual(snapshot.status.phase, GamePhase.DEFEAT)
+        self.assertFalse(self.gui.running)
+        for action in (self.gui._sell_selected_building, self.gui._repair_selected_building):
+            action()
+            self.assertEqual(self.gui.game.snapshot(), snapshot)
+            self.assertEqual(self.gui.message, snapshot.status.result_message)
+
+    def test_bullet_time_status_renders(self) -> None:
+        self.gui._handle_button(self.gui.sidebar.run_button)
+        self.gui.selected_kind = "power_node"
         self.gui.run(max_frames=2)
 
 

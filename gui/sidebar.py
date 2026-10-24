@@ -46,7 +46,8 @@ class Sidebar:
             pygame.Rect(PANEL_LEFT + 16, 294, 151, 36), "Start Night", manager
         )
         self.step_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 294, 151, 36), "Step +1s", manager
+            pygame.Rect(PANEL_LEFT + 180, 294, 151, 36), "Step +1s", manager,
+            tool_tip_text="Pause and advance one logical second, regardless of speed.",
         )
         self.cancel_build_button = UIButton(
             pygame.Rect(PANEL_LEFT + 16, 334, 151, 36), "Cancel Action", manager
@@ -79,7 +80,25 @@ class Sidebar:
             pygame.Rect(PANEL_LEFT + 180, 454, 151, 36), "Overdraft +40g", manager,
             tool_tip_text="Gain 40 gold and add 54 debt. Each use adds more debt.",
         )
+        self.speed_buttons: dict[UIButton, float] = {}
+        for index, multiplier in enumerate((0.5, 1.0, 2.0)):
+            button = UIButton(
+                pygame.Rect(PANEL_LEFT + 16 + index * 108, 494, 99, 32),
+                f"{multiplier:g}x", manager,
+                tool_tip_text=(
+                    f"Speed {multiplier:g}x. Shortcut: {index + 1}. "
+                    "Building placement or damaged-building inspection uses 0.25x bullet time."
+                ),
+            )
+            self.speed_buttons[button] = multiplier
         self.update_build_selection(None)
+        self.update_speed_selection(1.0)
+
+    def update_speed_selection(self, selected_speed: float) -> None:
+        """Mark the preferred speed, which resumes after automatic bullet time."""
+        for button, multiplier in self.speed_buttons.items():
+            marker = "> " if multiplier == selected_speed else ""
+            button.set_text(f"{marker}{multiplier:g}x")
 
     def update_actions(
         self, snapshot: GameSnapshot, building: BuildingSnapshot | None,

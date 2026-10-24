@@ -30,12 +30,14 @@ from gui.styles import BACKGROUND, FPS, WINDOW_SIZE
 
 
 LOGIC_STEP = 0.05
+BULLET_TIME_SPEED = 0.25
 
 
 class CriticalGridGUI:
     """Own window and input state while GameState owns the simulation."""
 
     def __init__(self) -> None:
+        """Initialize snapshot-driven views and independent selection and time controls."""
         pygame.init()
         pygame.display.set_caption("Critical Grid")
         self.screen = pygame.display.set_mode(WINDOW_SIZE)
@@ -58,6 +60,7 @@ class CriticalGridGUI:
         self.targeting_mode = False
         self.inspected_position: Position | None = None
         self.simulation_accumulator = 0.0
+        self.speed_multiplier = 1.0
         self.message = "Plan your grid. Select a building, then click a small-cell anchor."
         self.sidebar.set_phase(GamePhase.DAY, self.running)
 
@@ -112,10 +115,15 @@ class CriticalGridGUI:
                     else "Start Night before stepping the simulation."
                 )
             else:
+                self.running = False
+                self.simulation_accumulator = 0.0
                 for _ in range(round(1.0 / LOGIC_STEP)):
                     if self.game.snapshot().status.phase != GamePhase.NIGHT:
                         break
                     self._advance_once(LOGIC_STEP)
+                self.sidebar.set_phase(self.game.snapshot().status.phase, False)
+        elif button in self.sidebar.speed_buttons:
+            self._set_speed(self.sidebar.speed_buttons[button])
         elif button == self.sidebar.cancel_build_button:
             self._cancel_build()
         elif button == self.sidebar.sell_button:
@@ -390,6 +398,34 @@ class CriticalGridGUI:
         if status.phase != GamePhase.NIGHT:
             self.sidebar.set_phase(status.phase, self.running)
 
+    def _set_speed(self, multiplier: float) -> None:
+        """Change the frontend clock rate without changing the core's logical step size."""
+        self.speed_multiplier = multiplier
+        self.sidebar.update_speed_selection(multiplier)
+        self.message = f"Speed set to {multiplier:g}x. Bullet time temporarily uses 0.25x."
+
+    def _effective_speed(self, snapshot: GameSnapshot) -> float:
+        """Cap running nights during placement or inspection of HP-damaged buildings."""
+        building = self._selected_building(snapshot)
+        repair_focus = building is not None and building.hp < building.max_hp
+        if (
+            self.running and snapshot.status.phase == GamePhase.NIGHT
+            and (self.selected_kind is not None or repair_focus)
+        ):
+            return min(self.speed_multiplier, BULLET_TIME_SPEED)
+        return self.speed_multiplier
+
+    def _update_simulation(self, real_seconds: float) -> None:
+        """Convert real time to bounded logical steps; pause and DAY never accumulate time."""
+        snapshot = self.game.snapshot()
+        if not self.running or snapshot.status.phase != GamePhase.NIGHT:
+            self.simulation_accumulator = 0.0
+            return
+        self.simulation_accumulator += real_seconds * self._effective_speed(snapshot)
+        while self.simulation_accumulator + 1e-9 >= LOGIC_STEP and self.running:
+            self.simulation_accumulator -= LOGIC_STEP
+            self._advance_once(LOGIC_STEP)
+
     def run(self, max_frames: int | None = None) -> None:
         """Run input, fixed logical steps, and rendering; cap frames for smoke checks."""
         frames = 0
@@ -423,16 +459,15 @@ class CriticalGridGUI:
                         self._overload_selected_tower()
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_t:
                         self._begin_targeting()
+                    elif event.type == pygame.KEYDOWN and event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
+                        self._set_speed({pygame.K_1: 0.5, pygame.K_2: 1.0, pygame.K_3: 2.0}[event.key])
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         self._cancel_build()
                     if was_game:
                         self.manager.process_events(event)
 
-                if self.view == "game" and self.running:
-                    self.simulation_accumulator += dt
-                    while self.simulation_accumulator + 1e-9 >= LOGIC_STEP and self.running:
-                        self.simulation_accumulator -= LOGIC_STEP
-                        self._advance_once(LOGIC_STEP)
+                if self.view == "game":
+                    self._update_simulation(dt)
 
                 if self.view == "game":
                     snapshot = self.game.snapshot()
@@ -454,7 +489,9 @@ class CriticalGridGUI:
                         )
                     self.manager.update(dt)
                     self.screen.fill(BACKGROUND)
-                    self.hud.draw_status(snapshot, self.running)
+                    self.hud.draw_status(
+                        snapshot, self.running, self.speed_multiplier, self._effective_speed(snapshot),
+                    )
                     self.board.draw(
                         snapshot, self.selected_building_id,
                         self.inspected_position, hover, preview,
