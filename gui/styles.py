@@ -1,6 +1,6 @@
 """Shared layout, color, and building-label constants for the GUI."""
 
-WINDOW_SIZE = (1080, 660)
+WINDOW_SIZE = (1080, 840)
 # Drawing and mouse hit detection share this board origin and cell size.
 BOARD_LEFT, BOARD_TOP, CELL = 35, 132, 18
 PANEL_LEFT = 720

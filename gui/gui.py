@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from grid_td.game_state import BuildingSnapshot, GamePhase, GameSnapshot, GameState
+from grid_td.game_state import BuildingSnapshot, EnemySnapshot, GamePhase, GameSnapshot, GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.board_view import BoardView
@@ -30,12 +30,14 @@ from gui.styles import BACKGROUND, FPS, WINDOW_SIZE
 
 
 LOGIC_STEP = 0.05
+BULLET_TIME_SPEED = 0.25
 
 
 class CriticalGridGUI:
     """Own window and input state while GameState owns the simulation."""
 
     def __init__(self) -> None:
+        """Initialize snapshot-driven views and independent selection and time controls."""
         pygame.init()
         pygame.display.set_caption("Critical Grid")
         self.screen = pygame.display.set_mode(WINDOW_SIZE)
@@ -53,9 +55,12 @@ class CriticalGridGUI:
         self.view = "start"
         self.running = False
         self.selected_kind: str | None = None
-        self.selected_tower_id: int | None = None
+        self.selected_building_id: int | None = None
+        self.selected_enemy_id: int | None = None
+        self.targeting_mode = False
         self.inspected_position: Position | None = None
         self.simulation_accumulator = 0.0
+        self.speed_multiplier = 1.0
         self.message = "Plan your grid. Select a building, then click a small-cell anchor."
         self.sidebar.set_phase(GamePhase.DAY, self.running)
 
@@ -77,7 +82,10 @@ class CriticalGridGUI:
                 return
             kind = self.sidebar.build_buttons[button]
             self.selected_kind = None if self.selected_kind == kind else kind
-            self.selected_tower_id = None
+            self.selected_building_id = None
+            self.selected_enemy_id = None
+            self.targeting_mode = False
+            self.inspected_position = None
             self.sidebar.update_build_selection(self.selected_kind)
             self.message = (
                 f"Choose an anchor for {self.selected_kind.replace('_', ' ')}."
@@ -107,14 +115,27 @@ class CriticalGridGUI:
                     else "Start Night before stepping the simulation."
                 )
             else:
+                self.running = False
+                self.simulation_accumulator = 0.0
                 for _ in range(round(1.0 / LOGIC_STEP)):
                     if self.game.snapshot().status.phase != GamePhase.NIGHT:
                         break
                     self._advance_once(LOGIC_STEP)
+                self.sidebar.set_phase(self.game.snapshot().status.phase, False)
+        elif button in self.sidebar.speed_buttons:
+            self._set_speed(self.sidebar.speed_buttons[button])
         elif button == self.sidebar.cancel_build_button:
             self._cancel_build()
-        elif button == self.sidebar.demolish_button:
-            self._demolish_selected_tower()
+        elif button == self.sidebar.sell_button:
+            self._sell_selected_building()
+        elif button == self.sidebar.repair_button:
+            self._repair_selected_building()
+        elif button == self.sidebar.overload_button:
+            self._overload_selected_tower()
+        elif button == self.sidebar.target_button:
+            self._begin_targeting()
+        elif button == self.sidebar.clear_target_button:
+            self._clear_selected_target()
         elif button == self.sidebar.intel_button:
             self._buy_wave_intel()
         elif button == self.sidebar.overdraft_button:
@@ -148,23 +169,33 @@ class CriticalGridGUI:
             )
 
     def _cancel_build(self) -> None:
-        """Leave construction mode without changing the inspected cell."""
+        """Cancel construction or targeting without changing the selected building."""
         self.selected_kind = None
+        self.targeting_mode = False
         self.sidebar.update_build_selection(None)
-        self.message = "Build cancelled. Click the map to inspect."
+        self.message = "Command cancelled. Click the map to inspect."
 
     def _handle_board_click(self, mouse_pos: tuple[int, int]) -> None:
-        """Inspect an occupied small cell or build from its top-left anchor."""
+        """Build at cell anchors, inspect moving enemies, or assign a manual target."""
         snapshot = self.game.snapshot()
         position = self.board.position_at(mouse_pos, snapshot)
         if position is None:
             return
+        enemy = self.board.enemy_at(mouse_pos, snapshot)
+        if self.targeting_mode:
+            self._assign_selected_target(enemy)
+            return
+        self.selected_enemy_id = None
+        if self.selected_kind is None and enemy is not None:
+            self.selected_enemy_id = enemy.id
+            self.selected_building_id = None
+            self.inspected_position = None
+            self.message = f"{enemy.name} #{enemy.id} selected. Details follow this enemy."
+            return
         self.inspected_position = position
         building = snapshot.board[position.y][position.x].building
         if self.selected_kind is None:
-            self.selected_tower_id = (
-                building.id if building is not None and building.range is not None else None
-            )
+            self.selected_building_id = building.id if building is not None else None
             if building is None:
                 self.message = f"Terrain at ({position.x}, {position.y}) selected."
             else:
@@ -175,12 +206,12 @@ class CriticalGridGUI:
                     elif building.efficiency <= 0:
                         self.message += " This tower needs power."
                     else:
-                        self.message += " Highlighted cells are in range. O: overload."
+                        self.message += " Highlighted cells are in range. T: target. O: overload."
             return
         if snapshot.status.is_finished:
             self.message = snapshot.status.result_message
             return
-        self.selected_tower_id = None
+        self.selected_building_id = None
         try:
             # The core rechecks the full footprint even after a valid hover preview.
             self.game.build(self.selected_kind, position)
@@ -189,43 +220,144 @@ class CriticalGridGUI:
         else:
             placed = self.game.snapshot().board[position.y][position.x].building
             assert placed is not None
+            self.selected_building_id = placed.id
             self.message = f"Built {placed.name} at ({position.x}, {position.y})."
             if placed.range is not None:
-                self.selected_tower_id = placed.id
                 if not placed.connected_to_grid:
                     self.message += " Connect it to the core before it can attack."
             self.selected_kind = None
             self.sidebar.update_build_selection(None)
 
-    def _selected_tower(self, snapshot: GameSnapshot) -> BuildingSnapshot | None:
+    def _selected_building(self, snapshot: GameSnapshot) -> BuildingSnapshot | None:
         """Resolve a selected ID from the current snapshot after core changes."""
         for row in snapshot.board:
             for cell in row:
                 building = cell.building
                 if (
-                    building is not None and building.id == self.selected_tower_id
-                    and building.range is not None
+                    building is not None and building.id == self.selected_building_id
                 ):
                     return building
         return None
 
-    def _demolish_selected_tower(self) -> None:
-        """Demolish the selected tower via its stable snapshot ID."""
+    def _selected_tower(self, snapshot: GameSnapshot) -> BuildingSnapshot | None:
+        """Restrict tower-only commands without limiting building selection."""
+        building = self._selected_building(snapshot)
+        return building if building is not None and building.range is not None else None
+
+    def _selected_enemy(self, snapshot: GameSnapshot) -> EnemySnapshot | None:
+        """Track inspection by runtime ID as an enemy moves between map cells."""
+        return next((
+            enemy for row in snapshot.board for cell in row for enemy in cell.enemies
+            if enemy.id == self.selected_enemy_id
+        ), None)
+
+    def _refresh_selection(self, snapshot: GameSnapshot) -> None:
+        """Discard stale IDs and command modes after removal or terminal transitions."""
+        if self._selected_building(snapshot) is None:
+            self.selected_building_id = None
+            self.targeting_mode = False
+        if self._selected_enemy(snapshot) is None:
+            self.selected_enemy_id = None
+        if snapshot.status.is_finished:
+            self.targeting_mode = False
+            self.selected_kind = None
+            self.sidebar.update_build_selection(None)
+
+    def _begin_targeting(self) -> None:
+        """Keep the tower selected while the next enemy click chooses its manual target."""
         snapshot = self.game.snapshot()
         if snapshot.status.is_finished:
             self.message = snapshot.status.result_message
             return
         tower = self._selected_tower(snapshot)
         if tower is None:
-            self.message = "Click an existing tower first, then press Demolish."
+            self.message = "Select a tower first, then press Set Target."
+            return
+        self.selected_kind = None
+        self.selected_enemy_id = None
+        self.targeting_mode = True
+        self.sidebar.update_build_selection(None)
+        self.message = f"Choose an enemy for {tower.name}. Escape cancels targeting."
+
+    def _assign_selected_target(self, enemy: EnemySnapshot | None) -> None:
+        """Send stable IDs to the core; it owns range checks and automatic fallback."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.targeting_mode = False
+            self.message = snapshot.status.result_message
+            return
+        tower = self._selected_tower(snapshot)
+        if tower is None:
+            self.targeting_mode = False
+            self.message = "The selected tower is no longer available."
+            return
+        if enemy is None:
+            self.message = "Click an enemy marker to set the manual target. Escape cancels."
             return
         try:
-            self.game.demolish_tower(tower.id)
+            self.game.set_tower_target(tower.id, enemy.id)
         except ValueError as error:
             self.message = str(error)
         else:
-            self.message = f"Demolished {tower.name}. No refund."
-        self.selected_tower_id = None
+            self.targeting_mode = False
+            self.message = (
+                f"{tower.name} manual target: {enemy.name} #{enemy.id}. "
+                "Returns to Auto when the target dies or leaves range."
+            )
+
+    def _clear_selected_target(self) -> None:
+        """Clear only the manual target; automatic targets are never inferred."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
+            return
+        tower = self._selected_tower(snapshot)
+        if tower is None:
+            self.message = "Select a tower first, then press Clear Target."
+            return
+        try:
+            self.game.clear_tower_target(tower.id)
+        except ValueError as error:
+            self.message = str(error)
+        else:
+            self.targeting_mode = False
+            self.message = f"{tower.name} manual target cleared. Automatic targeting enabled."
+
+    def _sell_selected_building(self) -> None:
+        """Sell any selected non-core building and report the core's actual refund."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
+            return
+        building = self._selected_building(snapshot)
+        if building is None:
+            self.message = "Select a building first, then press Sell Building."
+            return
+        try:
+            refund = self.game.sell_building(building.id)
+        except ValueError as error:
+            self.message = str(error)
+        else:
+            self.message = f"Sold {building.name}. Refund +{refund} gold."
+            self.selected_building_id = None
+            self.targeting_mode = False
+
+    def _repair_selected_building(self) -> None:
+        """Restore selected building HP through the core, separately from service fees."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
+            return
+        building = self._selected_building(snapshot)
+        if building is None:
+            self.message = "Select a damaged building first, then press Repair HP."
+            return
+        try:
+            cost = self.game.repair_building(building.id)
+        except ValueError as error:
+            self.message = str(error)
+        else:
+            self.message = f"Repaired {building.name} to full HP. Spent {cost} gold."
 
     def _overload_selected_tower(self) -> None:
         """Overload the selected tower while keeping display data immutable."""
@@ -240,11 +372,10 @@ class CriticalGridGUI:
         try:
             self.game.overload_tower(tower.id)
         except ValueError as error:
-            self.selected_tower_id = None
             self.message = str(error)
         else:
             debt_added = self.game.snapshot().status.debt - snapshot.status.debt
-            self.message = f"{tower.name} overloaded. Debt +{debt_added}; repair due."
+            self.message = f"{tower.name} overloaded. Debt +{debt_added}; settlement service fee due."
 
     def _advance_once(self, seconds: float) -> None:
         """Advance one short core step and return to planning after settlement."""
@@ -266,6 +397,34 @@ class CriticalGridGUI:
             self.message = status.result_message
         if status.phase != GamePhase.NIGHT:
             self.sidebar.set_phase(status.phase, self.running)
+
+    def _set_speed(self, multiplier: float) -> None:
+        """Change the frontend clock rate without changing the core's logical step size."""
+        self.speed_multiplier = multiplier
+        self.sidebar.update_speed_selection(multiplier)
+        self.message = f"Speed set to {multiplier:g}x. Bullet time temporarily uses 0.25x."
+
+    def _effective_speed(self, snapshot: GameSnapshot) -> float:
+        """Cap running nights during placement or inspection of HP-damaged buildings."""
+        building = self._selected_building(snapshot)
+        repair_focus = building is not None and building.hp < building.max_hp
+        if (
+            self.running and snapshot.status.phase == GamePhase.NIGHT
+            and (self.selected_kind is not None or repair_focus)
+        ):
+            return min(self.speed_multiplier, BULLET_TIME_SPEED)
+        return self.speed_multiplier
+
+    def _update_simulation(self, real_seconds: float) -> None:
+        """Convert real time to bounded logical steps; pause and DAY never accumulate time."""
+        snapshot = self.game.snapshot()
+        if not self.running or snapshot.status.phase != GamePhase.NIGHT:
+            self.simulation_accumulator = 0.0
+            return
+        self.simulation_accumulator += real_seconds * self._effective_speed(snapshot)
+        while self.simulation_accumulator + 1e-9 >= LOGIC_STEP and self.running:
+            self.simulation_accumulator -= LOGIC_STEP
+            self._advance_once(LOGIC_STEP)
 
     def run(self, max_frames: int | None = None) -> None:
         """Run input, fixed logical steps, and rendering; cap frames for smoke checks."""
@@ -293,22 +452,29 @@ class CriticalGridGUI:
                     elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         self._handle_board_click(event.pos)
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_DELETE:
-                        self._demolish_selected_tower()
+                        self._sell_selected_building()
+                    elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                        self._repair_selected_building()
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_o:
                         self._overload_selected_tower()
+                    elif event.type == pygame.KEYDOWN and event.key == pygame.K_t:
+                        self._begin_targeting()
+                    elif event.type == pygame.KEYDOWN and event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
+                        self._set_speed({pygame.K_1: 0.5, pygame.K_2: 1.0, pygame.K_3: 2.0}[event.key])
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         self._cancel_build()
                     if was_game:
                         self.manager.process_events(event)
 
-                if self.view == "game" and self.running:
-                    self.simulation_accumulator += dt
-                    while self.simulation_accumulator + 1e-9 >= LOGIC_STEP and self.running:
-                        self.simulation_accumulator -= LOGIC_STEP
-                        self._advance_once(LOGIC_STEP)
+                if self.view == "game":
+                    self._update_simulation(dt)
 
                 if self.view == "game":
                     snapshot = self.game.snapshot()
+                    self._refresh_selection(snapshot)
+                    self.sidebar.update_actions(
+                        snapshot, self._selected_building(snapshot), self.targeting_mode,
+                    )
                     hover = (
                         self.board.position_at(pygame.mouse.get_pos(), snapshot)
                         if not snapshot.status.is_finished else None
@@ -323,12 +489,18 @@ class CriticalGridGUI:
                         )
                     self.manager.update(dt)
                     self.screen.fill(BACKGROUND)
-                    self.hud.draw_status(snapshot, self.running)
-                    self.board.draw(
-                        snapshot, self.selected_tower_id,
-                        self.inspected_position, hover, preview,
+                    self.hud.draw_status(
+                        snapshot, self.running, self.speed_multiplier, self._effective_speed(snapshot),
                     )
-                    self.sidebar.draw(snapshot, self.selected_kind, self.inspected_position)
+                    self.board.draw(
+                        snapshot, self.selected_building_id,
+                        self.inspected_position, hover, preview,
+                        self.selected_enemy_id,
+                    )
+                    self.sidebar.draw(
+                        snapshot, self.selected_kind, self.inspected_position,
+                        self._selected_enemy(snapshot), self.targeting_mode,
+                    )
                     self.hud.draw_message(display_message)
                     self.manager.draw_ui(self.screen)
                 else:

@@ -23,8 +23,11 @@ class HUD:
         self.small_font = small_font
         self.title_font = title_font
 
-    def draw_status(self, snapshot: GameSnapshot, running: bool) -> None:
-        """Show phase, wave, resources and power from one immutable snapshot."""
+    def draw_status(
+        self, snapshot: GameSnapshot, running: bool,
+        selected_speed: float = 1.0, effective_speed: float = 1.0,
+    ) -> None:
+        """Show snapshot resources and phase alongside frontend pause and speed state."""
         status = snapshot.status
         report = status.power
         activity = (
@@ -38,10 +41,16 @@ class HUD:
         )
         self._text("CRITICAL GRID", 34, 25, font=self.title_font)
         self._text(
-            f"{status.current_wave_name}"
-            f"   {status.phase.value.upper()}   {activity}"
-            f"   Time {status.elapsed_seconds:.1f}s",
-            339, 32, color=MUTED,
+            f"Wave {status.wave_index + 1}: {status.current_wave_name}"
+            f"   {status.phase.value.upper()}   {activity}",
+            339, 26, color=MUTED, font=self.small_font,
+        )
+        speed = f"Speed {selected_speed:g}x"
+        if effective_speed < selected_speed:
+            speed += f"   BULLET TIME {effective_speed:g}x"
+        self._text(
+            f"Time {status.elapsed_seconds:.1f}s   {speed}",
+            339, 50, color=MUTED, font=self.small_font,
         )
         self._text(
             f"Gold {status.gold}    Debt {status.debt}    Core HP {status.core_hp}"
@@ -53,9 +62,9 @@ class HUD:
     def draw_message(self, message: str) -> None:
         """Wrap the event message by rendered width and show at most two lines."""
         pygame.draw.rect(
-            self.screen, PANEL, pygame.Rect(18, 568, 1044, 76), border_radius=8
+            self.screen, PANEL, pygame.Rect(18, 744, 1044, 80), border_radius=8
         )
-        self._text("EVENT", 34, 579, color=MUTED, font=self.small_font)
+        self._text("EVENT", 34, 753, color=MUTED, font=self.small_font)
         words = message.split()
         lines: list[str] = []
         current = ""
@@ -70,7 +79,7 @@ class HUD:
         if current:
             lines.append(current)
         for index, line in enumerate(lines[:2]):
-            self._text(line, 34, 602 + index * 22, font=self.small_font)
+            self._text(line, 34, 776 + index * 22, font=self.small_font)
 
     def _text(
         self,
