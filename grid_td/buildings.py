@@ -330,17 +330,15 @@ class GunTower(Tower):
 
 @dataclass
 class CannonTower(Tower):
-    """High-damage, slower-firing tower.
-
-    The current implementation still treats it as single-target damage; the
-    splash damage from the design document is not implemented here yet.
-    """
+    """High-damage, slower-firing tower with target-centered splash damage."""
 
     SYMBOL: ClassVar[str] = "A"  # Map character used by TextRenderer.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
+    SPLASH_RADIUS: ClassVar[float] = 3.0  # World units around the primary target.
+    SPLASH_DAMAGE_RATIO: ClassVar[float] = 0.5  # Secondary damage multiplier.
 
     def __init__(self, building_id: int, position: Position, high_ground: bool = False) -> None:
-        """Create a slow high-damage tower; currently still single-target."""
+        """Create a slow high-damage tower with target-centered splash."""
         super().__init__(
             id=building_id,
             name="Cannon Tower",

@@ -1050,7 +1050,10 @@ class GameState:
             if target is None:
                 continue
 
-            target.take_damage(building.current_damage())
+            damage = building.current_damage()
+            target.take_damage(damage)
+            if isinstance(building, CannonTower):
+                self._apply_splash_damage(building, target, damage)
             if isinstance(building, SlowTower):
                 target.apply_slow(2.0)
 
@@ -1059,6 +1062,26 @@ class GameState:
         defeated = [enemy for enemy in self.enemies if not enemy.is_alive]
         self.gold += sum(enemy.reward for enemy in defeated)
         self.enemies = [enemy for enemy in self.enemies if enemy.is_alive]
+
+    def _apply_splash_damage(
+        self, tower: CannonTower, primary: Enemy, damage: float
+    ) -> None:
+        """Damage other living enemies around the cannon's primary target.
+
+        Splash is centered on the primary target's continuous route position
+        and is not clipped to the tower's attack range. The primary target is
+        excluded so it only receives its full direct hit, and armor is applied
+        by `Enemy.take_damage()` for every secondary target.
+        """
+        origin = primary.world_position_on_route(self.grid_map.path)
+        splash_damage = damage * tower.SPLASH_DAMAGE_RATIO
+        for enemy in self.enemies:
+            if enemy is primary or not enemy.is_alive:
+                continue
+            if world_distance(
+                enemy.world_position_on_route(self.grid_map.path), origin
+            ) <= tower.SPLASH_RADIUS:
+                enemy.take_damage(splash_damage)
 
     def _select_target(self, tower: Tower) -> Enemy | None:
         """Select a target, preferring a valid manual target when set.
