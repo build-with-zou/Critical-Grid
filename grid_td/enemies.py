@@ -9,8 +9,10 @@ their current positions.
 
 Enemies move along `GridMap.route`. Saboteurs can also attack power plants and
 power nodes when they enter their attack range; they do not yet change routes
-or attack other building types. `path_progress` is physical distance along the centerline, in
-small-cell world units, not waypoint indices.
+or attack other building types. Armored enemies subtract a flat armor value
+from positive hits while keeping a minimum of one damage. `path_progress` is
+physical distance along the centerline, in small-cell world units, not waypoint
+indices.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ class Enemy:
     speed: float  # World units per logical second when unslowed.
     damage_to_core: int  # Damage dealt to the core on reaching route end.
     reward: int  # Gold immediately awarded to GameState when defeated.
-    damage_reduction: float = 0.0  # Fraction of incoming damage ignored by armor.
+    armor: int = 0  # Flat damage removed from each positive incoming hit.
     id: int = 0  # Runtime ID assigned by GameState when spawned; 0 means unassigned.
     path_progress: float = 0.0  # Continuous progress from the route start.
     hp: float = 0.0  # Current health; non-positive values are reset to full.
@@ -41,18 +43,13 @@ class Enemy:
     attack_cooldown_remaining: float = 0.0  # Time until the next building attack.
 
     def __post_init__(self) -> None:
-        """Validate armor and ensure template-created enemies start at full health."""
+        """Validate flat armor and ensure enemies start at full health by default."""
         if (
-            isinstance(self.damage_reduction, bool)
-            or not isinstance(self.damage_reduction, (int, float))
+            isinstance(self.armor, bool)
+            or not isinstance(self.armor, int)
+            or self.armor < 0
         ):
-            raise ValueError("Damage reduction must be between 0 and 1.")
-        try:
-            valid_reduction = 0.0 <= float(self.damage_reduction) <= 1.0
-        except OverflowError:
-            valid_reduction = False
-        if not valid_reduction:
-            raise ValueError("Damage reduction must be between 0 and 1.")
+            raise ValueError("Armor must be a non-negative integer.")
         if self.hp <= 0:
             self.hp = self.max_hp
 
@@ -71,9 +68,15 @@ class Enemy:
         return self.speed * (0.55 if self.is_slowed else 1.0)
 
     def take_damage(self, amount: float) -> None:
-        """Apply armor-reduced damage and clamp health at zero."""
-        reduced = amount * (1.0 - self.damage_reduction)
-        self.hp = max(0.0, self.hp - reduced)
+        """Apply flat armor reduction, with a one-point minimum for positive hits.
+
+        Non-positive attack amounts do not damage the enemy. Positive hits
+        remove ``amount - armor`` and always deal at least one point, then clamp
+        health at zero.
+        """
+        if amount <= 0:
+            return
+        self.hp = max(0.0, self.hp - max(1.0, amount - self.armor))
 
     def apply_slow(self, seconds: float) -> None:
         """Apply slow, keeping the longer remaining duration on repeated hits."""
@@ -143,7 +146,7 @@ def create_enemy(kind: str) -> Enemy:
             speed=0.45 * LEGACY_TILE_SIZE,
             damage_to_core=2,
             reward=8,
-            damage_reduction=0.25,
+            armor=2,
         ),
         "saboteur": Enemy(
             "Saboteur",
@@ -168,7 +171,7 @@ def create_enemy(kind: str) -> Enemy:
         speed=template.speed,
         damage_to_core=template.damage_to_core,
         reward=template.reward,
-        damage_reduction=template.damage_reduction,
+        armor=template.armor,
         attack_range=template.attack_range,
         attack_damage=template.attack_damage,
         attack_cooldown_seconds=template.attack_cooldown_seconds,

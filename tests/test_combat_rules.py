@@ -9,16 +9,31 @@ from grid_td.position import Position
 
 
 class ArmorTest(unittest.TestCase):
-    def test_armored_enemy_takes_reduced_damage(self) -> None:
+    def test_armored_enemy_subtracts_flat_armor(self) -> None:
         armored = create_enemy("armored")
         basic = create_enemy("basic")
 
         armored.take_damage(4.0)
         basic.take_damage(4.0)
 
-        self.assertEqual(armored.damage_reduction, 0.25)
-        self.assertAlmostEqual(armored.hp, armored.max_hp - 3.0)
+        self.assertEqual(armored.armor, 2)
+        self.assertAlmostEqual(armored.hp, armored.max_hp - 2.0)
         self.assertAlmostEqual(basic.hp, basic.max_hp - 4.0)
+
+    def test_positive_hit_deals_at_least_one_damage(self) -> None:
+        armored = create_enemy("armored")
+
+        armored.take_damage(1.0)
+
+        self.assertAlmostEqual(armored.hp, armored.max_hp - 1.0)
+
+    def test_non_positive_hit_does_not_damage(self) -> None:
+        armored = create_enemy("armored")
+
+        armored.take_damage(0.0)
+        armored.take_damage(-5.0)
+
+        self.assertEqual(armored.hp, armored.max_hp)
 
     def test_tower_damage_respects_armor(self) -> None:
         game = GameState(create_demo_map())
@@ -31,10 +46,33 @@ class ArmorTest(unittest.TestCase):
 
         game.step(0.0)
 
-        self.assertAlmostEqual(armored.hp, armored.max_hp - 3.0)
+        self.assertAlmostEqual(armored.hp, armored.max_hp - 2.0)
 
-    def test_invalid_damage_reduction_is_rejected(self) -> None:
-        for value in (-0.1, 1.1, True, "0.25", float("nan"), 10**1000):
+    def test_slow_tower_applies_minimum_damage_and_slow(self) -> None:
+        game = GameState(create_demo_map())
+        game.build("slow_tower", Position(30, 6))
+        game.start_next_wave()
+        game.wave_runner = None
+        armored = create_enemy("armored")
+        armored.path_progress = 30.0
+        game.enemies = [armored]
+
+        game.step(0.0)
+
+        self.assertAlmostEqual(armored.hp, armored.max_hp - 1.0)
+        self.assertTrue(armored.is_slowed)
+
+    def test_snapshot_exposes_enemy_armor(self) -> None:
+        game = GameState(create_demo_map())
+        armored = create_enemy("armored")
+        game.enemies = [armored]
+
+        cell = game.cell_snapshot(armored.position_on_route(game.grid_map.path))
+
+        self.assertEqual(cell.enemies[0].armor, 2)
+
+    def test_invalid_armor_is_rejected(self) -> None:
+        for value in (-1, True, 1.5, "2", None):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 Enemy(
                     "Invalid",
@@ -42,7 +80,7 @@ class ArmorTest(unittest.TestCase):
                     speed=0,
                     damage_to_core=1,
                     reward=0,
-                    damage_reduction=value,
+                    armor=value,
                 )
 
 
@@ -112,7 +150,7 @@ class CannonSplashTest(unittest.TestCase):
 
         self._run_attack(primary, armored)
 
-        self.assertAlmostEqual(armored.hp, armored.max_hp - 4.0 * 0.75)
+        self.assertAlmostEqual(armored.hp, armored.max_hp - 2.0)
 
     def test_non_cannon_towers_do_not_splash(self) -> None:
         game = GameState(create_demo_map())
