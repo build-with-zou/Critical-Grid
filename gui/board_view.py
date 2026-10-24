@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pygame
 
 from grid_td.game_state import BuildPreview, BuildingSnapshot, GameSnapshot
@@ -17,9 +19,9 @@ from gui.styles import (
     GRID_LINE,
     GROUND,
     HIGH_GROUND,
+    LIMITED_COLOR,
     MINE_SITE,
     PANEL,
-    POWER_LINE,
     ROUTE,
     SYMBOL_COLORS,
     TEXT,
@@ -35,6 +37,23 @@ class BoardView:
         self.font = font
         self.small_font = pygame.font.SysFont("arial", 12, bold=True)
         self.legend_font = pygame.font.SysFont("arial", 14)
+        self.building_sprites = self._load_building_sprites()
+
+    @staticmethod
+    def _load_building_sprites() -> dict[str, pygame.Surface]:
+        """Cache selected art by snapshot kind; absent assets retain glyph rendering."""
+        assets = Path(__file__).resolve().parent / "assets" / "buildings"
+        selected = {
+            "core": "core-v2.png",
+            "mine": "mine-v1.png",
+            "gun_tower": "gun-tower-v2.png",
+        }
+        sprites: dict[str, pygame.Surface] = {}
+        for kind, filename in selected.items():
+            path = assets / filename
+            if path.is_file():
+                sprites[kind] = pygame.image.load(str(path)).convert_alpha()
+        return sprites
 
     def position_at(
         self, mouse_pos: tuple[int, int], snapshot: GameSnapshot
@@ -78,11 +97,10 @@ class BoardView:
                 if cell.building is not None:
                     buildings[cell.building.id] = cell.building
 
-        # Keep range and power links beneath units; draw interaction outlines last.
+        # Keep range beneath units; draw interaction outlines last.
         selected = buildings.get(selected_tower_id)
         if selected is not None and selected.range is not None:
             self._draw_range(snapshot, selected)
-        self._draw_power_links(snapshot, buildings)
         self._draw_enemies(snapshot)
         self._draw_buildings(buildings, selected_tower_id)
 
@@ -106,16 +124,17 @@ class BoardView:
         """Label terrain and state colors without obscuring the playable map."""
         for x, label, color in (
             (35, "Road", ROUTE),
-            (150, "Mine site", MINE_SITE),
-            (280, "High ground", HIGH_GROUND),
-            (445, "Powered", CHARGED_COLOR),
-            (560, "No power", UNCHARGED_COLOR),
+            (120, "Mine site", MINE_SITE),
+            (230, "High ground", HIGH_GROUND),
+            (365, "Full output", CHARGED_COLOR),
+            (490, "Low output", LIMITED_COLOR),
+            (610, "Off grid", UNCHARGED_COLOR),
         ):
             pygame.draw.rect(self.screen, color, pygame.Rect(x, 520, 12, 12))
             text = self.legend_font.render(label, True, TEXT)
             self.screen.blit(text, (x + 17, 518))
         hint = self.legend_font.render(
-            "A colored footprint shows whether the hovered build location is valid.",
+            "Grid status is shown on buildings; connections can cross empty cells.",
             True, TEXT,
         )
         self.screen.blit(hint, (35, 540))
@@ -134,52 +153,44 @@ class BoardView:
                 if world_distance(tower.center, cell.position.center) <= tower.range:
                     self.screen.blit(overlay, self._cell_rect(cell.position).move(1, 1))
 
-    def _draw_power_links(
-        self, snapshot: GameSnapshot, buildings: dict[int, BuildingSnapshot]
-    ) -> None:
-        """Draw one link for each pair of powered footprints sharing an edge."""
-        links: set[tuple[int, int]] = set()
-        for row in snapshot.board:
-            for cell in row:
-                source = cell.building
-                if source is None or not source.connected_to_grid:
-                    continue
-                # Right and down cover every shared edge without scanning it twice.
-                for dx, dy in ((1, 0), (0, 1)):
-                    x, y = cell.position.x + dx, cell.position.y + dy
-                    if x >= snapshot.width or y >= snapshot.height:
-                        continue
-                    target = snapshot.board[y][x].building
-                    if (
-                        target is not None and target.id != source.id
-                        and target.connected_to_grid
-                    ):
-                        links.add(tuple(sorted((source.id, target.id))))
-        for first, second in links:
-            pygame.draw.line(
-                self.screen, POWER_LINE,
-                self._world_point(buildings[first].center, snapshot),
-                self._world_point(buildings[second].center, snapshot), 3,
-            )
-
     def _draw_buildings(
         self, buildings: dict[int, BuildingSnapshot], selected_tower_id: int | None
     ) -> None:
-        """Draw each building once despite its presence in several board cells."""
+        """Draw each building once, using selected art when it is available."""
         for building in buildings.values():
             rect = self._building_rect(building)
-            color = SYMBOL_COLORS.get(building.symbol, (156, 174, 188))
-            pygame.draw.rect(self.screen, color, rect.inflate(-8, -8), border_radius=5)
-            charged = building.connected_to_grid and building.efficiency > 0
-            ring = CHARGED_COLOR if charged else UNCHARGED_COLOR
-            pygame.draw.rect(self.screen, ring, rect.inflate(-4, -4), 2, border_radius=6)
+            sprite = self.building_sprites.get(building.kind)
+            if sprite is not None:
+                # A solid terrain backing keeps map lines out of transparent art.
+                backing = MINE_SITE if building.kind == "mine" else GROUND
+                pygame.draw.rect(self.screen, backing, rect)
+                self.screen.blit(sprite, sprite.get_rect(center=rect.center))
+            else:
+                color = SYMBOL_COLORS.get(building.symbol, (156, 174, 188))
+                pygame.draw.rect(self.screen, color, rect.inflate(-8, -8), border_radius=5)
+            # Connectivity and available output are separate snapshot facts.
+            if not building.connected_to_grid:
+                ring, status = UNCHARGED_COLOR, "OFF"
+            elif building.efficiency < 1:
+                ring, status = LIMITED_COLOR, "LOW"
+            else:
+                ring, status = CHARGED_COLOR, ""
+            # Show warnings on all art, but keep normal sprites free of green rings.
+            if sprite is None or status:
+                pygame.draw.rect(
+                    self.screen, ring, rect.inflate(-4, -4), 2, border_radius=6
+                )
             if building.id == selected_tower_id:
                 pygame.draw.rect(
                     self.screen, (250, 226, 139), rect.inflate(-1, -1), 2,
                     border_radius=6,
                 )
-            symbol = self.font.render(building.symbol, True, BACKGROUND)
-            self.screen.blit(symbol, symbol.get_rect(center=rect.center))
+            if sprite is None:
+                symbol = self.font.render(building.symbol, True, BACKGROUND)
+                self.screen.blit(symbol, symbol.get_rect(center=rect.center))
+            if status:
+                badge = self.small_font.render(status, True, ring)
+                self.screen.blit(badge, badge.get_rect(midbottom=(rect.centerx, rect.bottom - 4)))
             if building.needs_repair:
                 warning = self.small_font.render("!", True, UNCHARGED_COLOR)
                 self.screen.blit(warning, (rect.right - 13, rect.top + 2))

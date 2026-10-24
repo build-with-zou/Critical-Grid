@@ -34,7 +34,7 @@ class Building:
     current_hp: int | None = None  # Mutable health; initialized from max_hp.
     power_supply: int = 0  # Power supply counted after grid connection.
     power_draw: int = 0  # Power demand counted after grid connection.
-    efficiency: float = 0.0  # Work multiplier calculated by PowerGrid.
+    efficiency: float = 0.0  # Final work multiplier from power and health.
     connected_to_grid: bool = False  # Whether the core can reach this building.
     needs_repair: bool = False  # Repair marker left by overload-style actions.
     footprint: Footprint = field(init=False)
@@ -141,6 +141,11 @@ class Building:
         return max(0.0, electrical_efficiency) * self.health_efficiency
 
     @property
+    def effective_power_supply(self) -> int:
+        """Return supply after condition effects; ordinary types are unchanged."""
+        return self.power_supply
+
+    @property
     def is_power_source(self) -> bool:
         """Return whether the building provides positive power supply."""
         return self.power_supply > 0
@@ -219,6 +224,13 @@ class PowerPlant(Building):
             power_draw=0,
         )
 
+    @property
+    def effective_power_supply(self) -> int:
+        """Return health-scaled supply; a destroyed plant provides nothing."""
+        if self.is_destroyed:
+            return 0
+        return round(self.power_supply * self.health_efficiency)
+
 
 @dataclass
 class PowerNode(Building):
@@ -262,6 +274,7 @@ class Tower(Building):
     cooldown_seconds: float = 1.0  # Base attack interval at 100% speed.
     cooldown_remaining: float = 0.0  # Logical seconds until the next attack.
     overload_seconds_remaining: float = 0.0  # Logical seconds of overload left.
+    target_enemy_id: int | None = None  # Manual target ID; None uses auto selection.
 
     @property
     def is_overloaded(self) -> bool:
@@ -329,17 +342,15 @@ class GunTower(Tower):
 
 @dataclass
 class CannonTower(Tower):
-    """High-damage, slower-firing tower.
-
-    The current implementation still treats it as single-target damage; the
-    splash damage from the design document is not implemented here yet.
-    """
+    """High-damage, slower-firing tower with target-centered splash damage."""
 
     SYMBOL: ClassVar[str] = "A"  # Map character used by TextRenderer.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
+    SPLASH_RADIUS: ClassVar[float] = 3.0  # World units around the primary target.
+    SPLASH_DAMAGE_RATIO: ClassVar[float] = 0.5  # Secondary damage multiplier.
 
     def __init__(self, building_id: int, position: Position, high_ground: bool = False) -> None:
-        """Create a slow high-damage tower; currently still single-target."""
+        """Create a slow high-damage tower with target-centered splash."""
         super().__init__(
             id=building_id,
             name="Cannon Tower",
