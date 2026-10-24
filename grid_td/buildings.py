@@ -34,7 +34,7 @@ class Building:
     current_hp: int | None = None  # Mutable health; initialized from max_hp.
     power_supply: int = 0  # Power supply counted after grid connection.
     power_draw: int = 0  # Power demand counted after grid connection.
-    efficiency: float = 0.0  # Work multiplier calculated by PowerGrid.
+    efficiency: float = 0.0  # Final work multiplier from power and health.
     connected_to_grid: bool = False  # Whether the core can reach this building.
     needs_repair: bool = False  # Repair marker left by overload-style actions.
     footprint: Footprint = field(init=False)

@@ -70,7 +70,7 @@ class PowerSnapshot:
     connected_count: int  # Number of buildings reachable from the core grid.
     total_supply: int  # Connected power supply.
     total_demand: int  # Connected power demand.
-    efficiency: float  # Shared connected-building efficiency multiplier.
+    efficiency: float  # Shared electrical multiplier before condition scaling.
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ class BuildingSnapshot:
     power_supply: int  # Power provided when connected.
     power_draw: int  # Power consumed when connected.
     connected_to_grid: bool  # Whether the latest power pass reached it.
-    efficiency: float  # Latest work multiplier.
+    efficiency: float  # Final work multiplier after power and condition scaling.
     needs_repair: bool  # Whether wave settlement should charge repair cost.
     width: int
     height: int
