@@ -13,7 +13,7 @@ Key state-flow boundaries:
 * New games start in DAY with no active wave runner.
 * `start_next_wave()` ends planning and creates a fresh NIGHT runner.
 * During NIGHT, `step()` spawns enemies, recalculates power, runs tower
-  attacks, moves enemies, then lets saboteurs attack power nodes. During DAY
+  attacks, moves enemies, then lets saboteurs attack power buildings. During DAY
   it leaves simulation time frozen.
 * `end_wave()` settles income, interest, and repairs, then enters the next
   DAY or records VICTORY. Core destruction records DEFEAT immediately.
@@ -70,7 +70,7 @@ class PowerSnapshot:
     connected_count: int  # Number of buildings reachable from the core grid.
     total_supply: int  # Connected power supply.
     total_demand: int  # Connected power demand.
-    efficiency: float  # Shared connected-building efficiency multiplier.
+    efficiency: float  # Shared electrical multiplier before condition scaling.
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ class BuildingSnapshot:
     power_supply: int  # Power provided when connected.
     power_draw: int  # Power consumed when connected.
     connected_to_grid: bool  # Whether the latest power pass reached it.
-    efficiency: float  # Latest work multiplier.
+    efficiency: float  # Final work multiplier after power and condition scaling.
     needs_repair: bool  # Whether wave settlement should charge repair cost.
     width: int
     height: int
@@ -104,6 +104,7 @@ class BuildingSnapshot:
     is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
     repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
     target_enemy_id: int | None = None  # Manual target enemy ID; None for auto.
+    health_efficiency: float = 1.0  # Condition multiplier before power efficiency.
 
 
 @dataclass(frozen=True)
@@ -454,6 +455,7 @@ class GameState:
             is_overloaded=tower.is_overloaded if tower is not None else False,
             repair_cost=building.repair_cost,
             target_enemy_id=tower.target_enemy_id if tower is not None else None,
+            health_efficiency=building.health_efficiency,
         )
 
     def _building_kind(self, building: Building) -> str:
@@ -919,7 +921,7 @@ class GameState:
 
         Order:
             Spawn due enemies first, recalculate power, run tower attacks,
-            advance enemies, and finally let saboteurs attack power nodes. This
+            advance enemies, and finally let saboteurs attack power buildings. This
             lets towers respond to newly spawned enemies while node attacks use
             the enemies' updated positions.
 
@@ -970,7 +972,7 @@ class GameState:
         self._towers_attack(delta)
         self._advance_enemies(delta)
         if self.core_hp > 0:
-            self._enemies_attack_nodes(delta)
+            self._enemies_attack_power_buildings(delta)
             self.recalculate_power()
 
         if self.core_hp <= 0:
@@ -1048,7 +1050,10 @@ class GameState:
             if target is None:
                 continue
 
-            target.take_damage(building.current_damage())
+            damage = building.current_damage()
+            target.take_damage(damage)
+            if isinstance(building, CannonTower):
+                self._apply_splash_damage(building, target, damage)
             if isinstance(building, SlowTower):
                 target.apply_slow(2.0)
 
@@ -1057,6 +1062,26 @@ class GameState:
         defeated = [enemy for enemy in self.enemies if not enemy.is_alive]
         self.gold += sum(enemy.reward for enemy in defeated)
         self.enemies = [enemy for enemy in self.enemies if enemy.is_alive]
+
+    def _apply_splash_damage(
+        self, tower: CannonTower, primary: Enemy, damage: float
+    ) -> None:
+        """Damage other living enemies around the cannon's primary target.
+
+        Splash is centered on the primary target's continuous route position
+        and is not clipped to the tower's attack range. The primary target is
+        excluded so it only receives its full direct hit, and armor is applied
+        by `Enemy.take_damage()` for every secondary target.
+        """
+        origin = primary.world_position_on_route(self.grid_map.path)
+        splash_damage = damage * tower.SPLASH_DAMAGE_RATIO
+        for enemy in self.enemies:
+            if enemy is primary or not enemy.is_alive:
+                continue
+            if world_distance(
+                enemy.world_position_on_route(self.grid_map.path), origin
+            ) <= tower.SPLASH_RADIUS:
+                enemy.take_damage(splash_damage)
 
     def _select_target(self, tower: Tower) -> Enemy | None:
         """Select a target, preferring a valid manual target when set.
@@ -1109,24 +1134,27 @@ class GameState:
 
         self.enemies = [enemy for enemy in self.enemies if enemy not in escaped]
 
-    def _enemies_attack_nodes(self, seconds: float) -> None:
-        """Let ready saboteurs damage the nearest living node in range.
+    def _enemies_attack_power_buildings(self, seconds: float) -> None:
+        """Let ready saboteurs damage power plants, then nearby power nodes.
 
         Saboteurs remain on the fixed route in this prototype. Their attack
         range uses the same Manhattan distance policy as tower targeting, and
-        each saboteur can perform at most one node attack per simulation step.
-        Destroyed nodes remain on the map with zero HP but stop transmitting
-        power during the following recalculation.
+        each saboteur can perform at most one building attack per simulation
+        step. Within range, power plants take priority over power nodes, and
+        the nearest building wins within the same priority. Destroyed power
+        buildings remain on the map with zero HP but stop supplying or
+        transmitting power during the following recalculation.
         """
-        nodes = [
+        targets = [
             building
             for building in self.buildings
-            if isinstance(building, PowerNode) and not building.is_destroyed
+            if isinstance(building, (PowerPlant, PowerNode))
+            and not building.is_destroyed
         ]
         for enemy in self.enemies:
             enemy.tick_attack_cooldown(seconds)
 
-        if not nodes:
+        if not targets:
             return
 
         for enemy in self.enemies:
@@ -1134,22 +1162,25 @@ class GameState:
                 continue
 
             enemy_position = enemy.world_position_on_route(self.grid_map.path)
-            target = min(
-                (
-                    node
-                    for node in nodes
-                    if world_distance(enemy_position, node.center) <= enemy.attack_range
-                ),
-                key=lambda node: world_distance(enemy_position, node.center),
-                default=None,
-            )
-            if target is None:
+            in_range = [
+                building
+                for building in targets
+                if world_distance(enemy_position, building.center) <= enemy.attack_range
+            ]
+            if not in_range:
                 continue
 
+            target = min(
+                in_range,
+                key=lambda building: (
+                    0 if isinstance(building, PowerPlant) else 1,
+                    world_distance(enemy_position, building.center),
+                ),
+            )
             target.take_damage(enemy.attack_damage)
             enemy.reset_attack_cooldown()
             if target.is_destroyed:
-                nodes.remove(target)
-                if not nodes:
+                targets.remove(target)
+                if not targets:
                     return
 

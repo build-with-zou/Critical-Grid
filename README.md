@@ -10,19 +10,19 @@ The runtime has one authoritative state object: `GameState`. The normal data
 flow is:
 
 ```text
-main.py
+main.py / gui/gui.py
   -> GameState
      -> GridMap / Position       map and coordinate rules
      -> Building / Enemy         mutable domain entities
      -> PowerGrid                 connection and efficiency calculation
      -> WaveRunner                enemy spawn schedule
      -> snapshot()                read-only presentation contract
-  -> TextRenderer                 text projection of the snapshot contract
+  -> TextRenderer / GUI          presentation consumers
 ```
 
 `GameState.step(seconds)` is the simulation boundary. Each NIGHT step spawns due
 enemies, recalculates power, lets connected towers attack, advances enemies,
-then lets saboteurs attack power nodes. Wave settlement is separate:
+then lets saboteurs attack power plants and nodes. Wave settlement is separate:
 `end_wave()` applies
 mine income, debt interest, and repair costs, while `start_next_wave()` creates
 the next spawn runner.
@@ -35,11 +35,11 @@ frontends can render the same source of truth.
 The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
 power nodes using a six-world-unit coverage radius; ordinary buildings do not
-relay power. Every building has mutable health and supports gold-funded repair;
-saboteurs currently attack only power nodes. Other enemy building targets and
-dynamic routing are still pending. Treat the code as the
-behavioral source of truth when changing the prototype; use the design document
-for planned features and unresolved rules.
+relay power. Every building has mutable health, condition-based efficiency,
+and gold-funded repair. Saboteurs prioritize power plants over power nodes;
+other enemy building targets, route deviation, and dynamic routing are still
+pending. Treat the code as the behavioral source of truth when changing the
+prototype; use the design document for planned features and unresolved rules.
 
 Recommended reading order:
 
@@ -52,7 +52,9 @@ Recommended reading order:
 5. `grid_td/power_grid.py` for connectivity and efficiency side effects.
 6. `grid_td/map.py`, `grid_td/position.py`, and `grid_td/renderer.py` for
    supporting rules and output.
-7. `tests/test_core_loop.py` for the currently protected behavior.
+7. `gui/gui.py` for the Pygame frontend and its use of public commands.
+8. `tests/` for the currently protected behavior, with `test_core_loop.py` as
+   the main end-to-end entry point.
 
 ## Wave Lifecycle
 
@@ -96,12 +98,11 @@ if game.snapshot().status.waiting_for_next_wave:
   after victory or defeat, and leave state unchanged on rejection. Defeat is
   recorded by `step()` and is not followed by wave settlement.
 
-GUI migration is required: initialize in DAY, offer a Start Night action,
-and remove immediate next-wave startup after settlement. Keep Run/Pause
-separate from starting a night. The existing `gui/` is not yet migrated and
-will remain in DAY until it calls `start_next_wave()`; its previous automatic
-startup after settlement would skip planning. This change only updates the
-core and text demo. Frontends should catch `ValueError` for rejected commands.
+The core, text demo, and `gui/` frontend follow this lifecycle. The GUI
+initializes in DAY, exposes a separate Start Night action, and returns to
+planning after each settled night. Run/Pause only controls simulation time and
+does not start a night. Frontends should catch `ValueError` for rejected
+commands.
 
 Build and intel commands also reject a destroyed core or ended game without
 changing state. `buy_wave_intel()` checks wave availability before charging:
@@ -129,10 +130,12 @@ right and y pointing down. `Position` accepts integer small-cell coordinates;
   the core, and other buildings. Mines must fit entirely inside mine terrain;
   other buildings cannot overlap it. High-ground range bonuses require full
   footprint coverage.
-- Power conducts between four-neighbor occupied cells along building edges.
-  Partial edge contact connects; diagonal-only contact and empty gaps do not.
-  Supply, demand and connected counts include each building once, regardless
-  of its size.
+- Power propagates from the core, power plants, and power nodes to every
+  building whose center is within an inclusive six-world-unit Manhattan radius
+  of a connected transmitter. Ordinary buildings cannot relay power, so a
+  powered mine or tower never extends coverage to another building. Supply,
+  demand and connected counts include each building once, regardless of its
+  size.
 - Base tower range is 6 units, or 9 on high ground. Basic enemy speed is 2.25
   units per logical second; other template speeds also scale by three. Spawn
   times, cooldowns, overload durations, costs and wave settlement do not scale.
@@ -176,29 +179,32 @@ path lengths are independent. Continuous targeting changes attack timing from
 the previous discrete-cell checks, so identical final combat results are not
 guaranteed. Dead enemies cannot absorb another tower's attack before cleanup.
 
-### Snapshot and GUI Migration
+### Snapshot and GUI Contract
 
-The core and text demo are migrated; **GUI code is unchanged and requires
-adaptation** before use with this spatial contract:
+The core, text demo, and `gui/` presentation layer all use the snapshot
+contract:
 
-- `GameSnapshot` adds required fields `cell_size` (currently `1.0` world unit)
-  and `distance_metric` (`"manhattan"`). Map width/height are small-cell counts.
-- `BuildingSnapshot` adds required `width`, `height` and `center`. Draw/select
-  the full footprint using its anchor, and deduplicate by ID when collecting
-  buildings from board cells. Every covered cell exposes that building.
-- `EnemySnapshot` adds required `world_position`. Use it for continuous drawing;
-  `position` is the containing small cell. `speed` is in world units per second,
-  and `path_progress` is world distance, **not a route-list index**. Do not use
-  `route[int(path_progress)]` or reconstruct positions from waypoint indices.
-- Entity-level `position_on_route()` and `has_reached_core()` now take a
-  `RoutePath` (`grid_map.path`), rather than a waypoint tuple. Presentation
-  code should read snapshots instead of calling these domain methods.
+- `GameSnapshot` provides required fields `cell_size` (currently `1.0` world
+  unit) and `distance_metric` (`"manhattan"`). Map width/height are small-cell
+  counts.
+- `BuildingSnapshot` provides required `width`, `height` and `center`. Draw and
+  select the full footprint using its anchor, and deduplicate by ID when
+  collecting buildings from board cells. Every covered cell exposes that
+  building.
+- `EnemySnapshot` provides required `world_position`. Use it for continuous
+  drawing; `position` is the containing small cell. `speed` is in world units
+  per second, and `path_progress` is world distance, **not a route-list index**.
+  Do not use `route[int(path_progress)]` or reconstruct positions from waypoint
+  indices.
+- Entity-level `position_on_route()` and `has_reached_core()` take a `RoutePath`
+  (`grid_map.path`), rather than a waypoint tuple. Presentation code should read
+  snapshots instead of calling these domain methods.
 - Convert mouse coordinates to small-cell anchors and preview full footprints
   through `preview_build()`. Pixel size per small cell is a GUI decision; the
   core does not depend on rendering scale. Use core geometry for targeting and
   range feedback instead of repeating the old discrete-cell range rules.
 - Tools/tests that manually construct snapshot dataclasses must provide the
-  new required fields. Existing coordinates migrate by multiplying anchors by
+  required fields. Existing coordinates migrate by multiplying anchors by
   three; existing distance/speed values also multiply by three. Do not migrate
   seconds, damage, gold or power values.
 
@@ -248,9 +254,22 @@ if building is not None:
 - Zero-HP non-core buildings remain on the map and can be repaired through the
   same command, preserving their IDs and footprints. Successful repairs
   immediately recalculate power: restoring a node can reconnect downstream
-  buildings, and restoring a plant can restore its supply. Damaged-but-living
-  buildings do not yet suffer an HP-based efficiency penalty.
-- `BuildingSnapshot` adds an optional `repair_cost` field (default `0` for
+  buildings, and restoring a plant can restore its supply.
+- Health condition uses ten-percent bands. `90%~100% HP` has condition
+  efficiency `100%`; below 90%, each lower band reduces it by 10 percentage
+  points (`80%~<90%` gives `90%`, `70%~<80%` gives `80%`, and so on); `0 HP`
+  gives `0%`. The exact band table is centralized in `Building` for balance
+  changes.
+- `PowerReport.efficiency` remains the shared electrical efficiency. Each
+  building's `Building.efficiency` is `PowerReport.efficiency ×
+  Building.health_efficiency`, and mines/towers use this final value.
+- The condition multiplier affects consumer work (mine income, tower damage,
+  and tower attack speed) and power-plant supply. A damaged plant supplies
+  `round(nominal supply × health_efficiency)`. The core keeps its nominal
+  supply until it is destroyed, and power nodes still transmit at full range
+  until destroyed; node transmission degradation remains a later rule.
+- `BuildingSnapshot` adds optional `repair_cost` and `health_efficiency` fields
+  (defaults `0` and `1.0` for
   manually constructed snapshots). Runtime snapshots always quote the full
   HP repair cost, even when the command is unavailable due to game state or
   insufficient gold. Existing `hp` and `max_hp` fields show actual health.
@@ -265,10 +284,11 @@ if building is not None:
   still charges 5 gold per flagged building and clears the flag without
   restoring HP. Buying HP repair does not cancel that fee.
 
-The GUI has not gained a repair button in this change. It can read the selected
-building's snapshot fields and call `repair_building(building.id)`, displaying
-any `ValueError`. Enemy building attacks still target only power nodes; health
-and repair interfaces are ready for additional building targets.
+The current GUI reads selected building HP and repair price from snapshots but
+does not yet expose a repair button. A future control should call
+`repair_building(building.id)` and display any `ValueError`. Enemy building
+attacks currently target power plants and nodes; health and repair interfaces
+are ready for additional building targets.
 
 ## Selling and Targeting
 
@@ -294,6 +314,24 @@ when it spawns. `EnemySnapshot` exposes it as a required `id` field, and
 `BuildingSnapshot` exposes `target_enemy_id` (default `None`) for towers. Tools
 that construct these snapshots by hand must provide `EnemySnapshot.id`.
 
+## Combat Effects
+
+- Cannon towers deal full damage to their primary target and apply splash
+  damage to other living enemies within **3.0 world units** of that target's
+  continuous position. Splash uses **50%** of the cannon's final damage and is
+  not clipped to the tower's attack range. The primary target is not hit twice,
+  and splash still resolves if the primary target dies from the direct hit.
+- Armored enemies have **25% damage reduction**. All damage routed through
+  `Enemy.take_damage()` is reduced, including cannon splash and slow-tower
+  damage. Other enemy templates have no reduction.
+- Saboteurs attack power plants and power nodes while remaining on the fixed
+  route. Within attack range, a power plant takes priority over a node; the
+  nearest target wins within the same priority. Destroying a plant removes its
+  supply, and destroying a node disconnects downstream coverage on the next
+  power recalculation.
+- Power-node transmission remains full while the node is alive; health-based
+  transmission degradation is still pending.
+
 ## Emergency Commands
 
 - `core_overdraft(gold_amount=40)` accepts a positive integer, excluding
@@ -315,8 +353,10 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 
 ```text
 .
-├── GAME_DESIGN.md          # Core gameplay design document
+├── GAME_DESIGN.md          # Local gameplay design document
+├── DEVELOPMENT_REPORT.md   # Local collaboration and integration notes
 ├── README.md               # Project structure and usage guide
+├── requirements.txt        # GUI runtime dependencies
 ├── main.py                 # Runs a minimal text-based demo
 ├── grid_td/
 │   ├── __init__.py         # Package entry
@@ -329,15 +369,35 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 │   ├── waves.py            # Wave and spawn logic
 │   ├── game_state.py       # Game state and core rules
 │   └── renderer.py         # Text renderer
+├── gui/
+│   ├── gui.py              # Pygame entry point and main loop
+│   ├── board_view.py       # Map, buildings, enemies and preview rendering
+│   ├── sidebar.py          # Build controls and selected-cell details
+│   ├── hud.py              # Status bar and event messages
+│   ├── menu.py             # Start and level-selection screens
+│   ├── styles.py           # Shared layout and colors
+│   └── assets/             # Building sprites and review previews
 └── tests/
-    └── test_core_loop.py   # Core logic tests
+    └── test_*.py           # Core rules and integration tests
 ```
 
 ## Run
 
+Text demo:
+
 ```bash
 python3 main.py
 ```
+
+GUI:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 gui/gui.py
+```
+
+The GUI requires `pygame-ce`, `pygame_gui`, and `python-i18n`. The core text
+demo uses only the Python standard library.
 
 ## Test
 
@@ -348,20 +408,34 @@ python3 -m unittest discover -s tests
 ## Current Features
 
 - 36 by 21 small-cell map with configurable rectangular building footprints.
-- Enemy movement along a fixed route.
-- Buildable mines, power plants, power nodes, and three tower types.
-- Power-grid connection calculation.
-- Reduced building efficiency when power is insufficient.
-- Wave spawning.
-- Core overdraft.
-- Tower overload.
-- Shared building health and instant gold-funded repairs, including grid recovery.
+- Fixed enemy route with continuous world-space movement and four enemy types,
+  including armored damage reduction.
+- Buildable mines, power plants, power nodes, and three tower types, including
+  cannon splash damage.
+- Radius-based power-grid connection and shared efficiency.
+- Health-scaled power-plant supply and reduced building efficiency when power is
+  insufficient or building health has dropped below its condition band.
+- Saboteurs attacking power plants and nodes with plant priority.
+- DAY/NIGHT lifecycle with explicit Start Night and wave settlement.
+- Wave spawning, mine income, debt interest, kill rewards, and overload fees.
+- Core overdraft, tower overload, wave intel, building repair, and selling.
+- Manual tower targeting through stable enemy IDs.
+- Building health, condition efficiency, and instant gold-funded repairs,
+  including grid recovery.
 - Text-based map rendering.
+- Pygame GUI with map rendering, build preview, HUD, tower controls, intel,
+  overdraft, and the DAY/NIGHT flow.
 
 ## Next Steps
 
-This is currently a pure logic prototype. Future work can move in two directions:
+The current prototype is smaller than the full V0.2 design. The main remaining
+work is:
 
-- Improve the Python logic: balance numbers, add enemies, towers, intel, and technology.
-- Add a graphical interface, such as Pygame, while keeping the existing object system.
+- Dynamic pathfinding and building-influenced route changes.
+- Combat completion: enemy attacks on more building types, saboteur route
+  deviation, and node transmission degradation.
+- Eight-night progression and balance.
+- Per-building power priority, time-scale controls, and richer wave intel.
+- GUI follow-ups such as repair, sell, targeting controls, and attack/path
+  visualization.
 
