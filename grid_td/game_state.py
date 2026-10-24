@@ -122,6 +122,7 @@ class EnemySnapshot:
     path_progress: float  # World distance traveled along the route.
     is_slowed: bool  # Whether a slow effect is currently active.
     world_position: WorldPosition  # Continuous position in small-cell units.
+    armor: int = 0  # Flat damage removed from each positive incoming hit.
 
 
 @dataclass(frozen=True)
@@ -487,6 +488,7 @@ class GameState:
                     path_progress=enemy.path_progress,
                     is_slowed=enemy.is_slowed,
                     world_position=world_position,
+                    armor=enemy.armor,
                 )
             )
 
