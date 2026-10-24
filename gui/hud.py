@@ -53,9 +53,9 @@ class HUD:
     def draw_message(self, message: str) -> None:
         """Wrap the event message by rendered width and show at most two lines."""
         pygame.draw.rect(
-            self.screen, PANEL, pygame.Rect(18, 568, 1044, 76), border_radius=8
+            self.screen, PANEL, pygame.Rect(18, 744, 1044, 80), border_radius=8
         )
-        self._text("EVENT", 34, 579, color=MUTED, font=self.small_font)
+        self._text("EVENT", 34, 753, color=MUTED, font=self.small_font)
         words = message.split()
         lines: list[str] = []
         current = ""
@@ -70,7 +70,7 @@ class HUD:
         if current:
             lines.append(current)
         for index, line in enumerate(lines[:2]):
-            self._text(line, 34, 602 + index * 22, font=self.small_font)
+            self._text(line, 34, 776 + index * 22, font=self.small_font)
 
     def _text(
         self,

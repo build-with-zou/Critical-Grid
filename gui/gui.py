@@ -53,7 +53,7 @@ class CriticalGridGUI:
         self.view = "start"
         self.running = False
         self.selected_kind: str | None = None
-        self.selected_tower_id: int | None = None
+        self.selected_building_id: int | None = None
         self.inspected_position: Position | None = None
         self.simulation_accumulator = 0.0
         self.message = "Plan your grid. Select a building, then click a small-cell anchor."
@@ -77,7 +77,8 @@ class CriticalGridGUI:
                 return
             kind = self.sidebar.build_buttons[button]
             self.selected_kind = None if self.selected_kind == kind else kind
-            self.selected_tower_id = None
+            self.selected_building_id = None
+            self.inspected_position = None
             self.sidebar.update_build_selection(self.selected_kind)
             self.message = (
                 f"Choose an anchor for {self.selected_kind.replace('_', ' ')}."
@@ -113,8 +114,12 @@ class CriticalGridGUI:
                     self._advance_once(LOGIC_STEP)
         elif button == self.sidebar.cancel_build_button:
             self._cancel_build()
-        elif button == self.sidebar.demolish_button:
-            self._demolish_selected_tower()
+        elif button == self.sidebar.sell_button:
+            self._sell_selected_building()
+        elif button == self.sidebar.repair_button:
+            self._repair_selected_building()
+        elif button == self.sidebar.overload_button:
+            self._overload_selected_tower()
         elif button == self.sidebar.intel_button:
             self._buy_wave_intel()
         elif button == self.sidebar.overdraft_button:
@@ -162,9 +167,7 @@ class CriticalGridGUI:
         self.inspected_position = position
         building = snapshot.board[position.y][position.x].building
         if self.selected_kind is None:
-            self.selected_tower_id = (
-                building.id if building is not None and building.range is not None else None
-            )
+            self.selected_building_id = building.id if building is not None else None
             if building is None:
                 self.message = f"Terrain at ({position.x}, {position.y}) selected."
             else:
@@ -180,7 +183,7 @@ class CriticalGridGUI:
         if snapshot.status.is_finished:
             self.message = snapshot.status.result_message
             return
-        self.selected_tower_id = None
+        self.selected_building_id = None
         try:
             # The core rechecks the full footprint even after a valid hover preview.
             self.game.build(self.selected_kind, position)
@@ -189,43 +192,64 @@ class CriticalGridGUI:
         else:
             placed = self.game.snapshot().board[position.y][position.x].building
             assert placed is not None
+            self.selected_building_id = placed.id
             self.message = f"Built {placed.name} at ({position.x}, {position.y})."
             if placed.range is not None:
-                self.selected_tower_id = placed.id
                 if not placed.connected_to_grid:
                     self.message += " Connect it to the core before it can attack."
             self.selected_kind = None
             self.sidebar.update_build_selection(None)
 
-    def _selected_tower(self, snapshot: GameSnapshot) -> BuildingSnapshot | None:
+    def _selected_building(self, snapshot: GameSnapshot) -> BuildingSnapshot | None:
         """Resolve a selected ID from the current snapshot after core changes."""
         for row in snapshot.board:
             for cell in row:
                 building = cell.building
                 if (
-                    building is not None and building.id == self.selected_tower_id
-                    and building.range is not None
+                    building is not None and building.id == self.selected_building_id
                 ):
                     return building
         return None
 
-    def _demolish_selected_tower(self) -> None:
-        """Demolish the selected tower via its stable snapshot ID."""
+    def _selected_tower(self, snapshot: GameSnapshot) -> BuildingSnapshot | None:
+        """Restrict tower-only commands without limiting building selection."""
+        building = self._selected_building(snapshot)
+        return building if building is not None and building.range is not None else None
+
+    def _sell_selected_building(self) -> None:
+        """Sell any selected non-core building and report the core's actual refund."""
         snapshot = self.game.snapshot()
         if snapshot.status.is_finished:
             self.message = snapshot.status.result_message
             return
-        tower = self._selected_tower(snapshot)
-        if tower is None:
-            self.message = "Click an existing tower first, then press Demolish."
+        building = self._selected_building(snapshot)
+        if building is None:
+            self.message = "Select a building first, then press Sell Building."
             return
         try:
-            self.game.demolish_tower(tower.id)
+            refund = self.game.sell_building(building.id)
         except ValueError as error:
             self.message = str(error)
         else:
-            self.message = f"Demolished {tower.name}. No refund."
-        self.selected_tower_id = None
+            self.message = f"Sold {building.name}. Refund +{refund} gold."
+            self.selected_building_id = None
+
+    def _repair_selected_building(self) -> None:
+        """Restore selected building HP through the core, separately from service fees."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
+            return
+        building = self._selected_building(snapshot)
+        if building is None:
+            self.message = "Select a damaged building first, then press Repair HP."
+            return
+        try:
+            cost = self.game.repair_building(building.id)
+        except ValueError as error:
+            self.message = str(error)
+        else:
+            self.message = f"Repaired {building.name} to full HP. Spent {cost} gold."
 
     def _overload_selected_tower(self) -> None:
         """Overload the selected tower while keeping display data immutable."""
@@ -240,11 +264,10 @@ class CriticalGridGUI:
         try:
             self.game.overload_tower(tower.id)
         except ValueError as error:
-            self.selected_tower_id = None
             self.message = str(error)
         else:
             debt_added = self.game.snapshot().status.debt - snapshot.status.debt
-            self.message = f"{tower.name} overloaded. Debt +{debt_added}; repair due."
+            self.message = f"{tower.name} overloaded. Debt +{debt_added}; settlement service fee due."
 
     def _advance_once(self, seconds: float) -> None:
         """Advance one short core step and return to planning after settlement."""
@@ -293,7 +316,9 @@ class CriticalGridGUI:
                     elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         self._handle_board_click(event.pos)
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_DELETE:
-                        self._demolish_selected_tower()
+                        self._sell_selected_building()
+                    elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                        self._repair_selected_building()
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_o:
                         self._overload_selected_tower()
                     elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -309,6 +334,7 @@ class CriticalGridGUI:
 
                 if self.view == "game":
                     snapshot = self.game.snapshot()
+                    self.sidebar.update_actions(snapshot, self._selected_building(snapshot))
                     hover = (
                         self.board.position_at(pygame.mouse.get_pos(), snapshot)
                         if not snapshot.status.is_finished else None
@@ -325,7 +351,7 @@ class CriticalGridGUI:
                     self.screen.fill(BACKGROUND)
                     self.hud.draw_status(snapshot, self.running)
                     self.board.draw(
-                        snapshot, self.selected_tower_id,
+                        snapshot, self.selected_building_id,
                         self.inspected_position, hover, preview,
                     )
                     self.sidebar.draw(snapshot, self.selected_kind, self.inspected_position)

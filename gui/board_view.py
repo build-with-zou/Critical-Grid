@@ -68,7 +68,7 @@ class BoardView:
     def draw(
         self,
         snapshot: GameSnapshot,
-        selected_tower_id: int | None,
+        selected_building_id: int | None,
         inspected_position: Position | None,
         hover_position: Position | None,
         preview: BuildPreview | None,
@@ -98,11 +98,11 @@ class BoardView:
                     buildings[cell.building.id] = cell.building
 
         # Keep range beneath units; draw interaction outlines last.
-        selected = buildings.get(selected_tower_id)
+        selected = buildings.get(selected_building_id)
         if selected is not None and selected.range is not None:
             self._draw_range(snapshot, selected)
         self._draw_enemies(snapshot)
-        self._draw_buildings(buildings, selected_tower_id)
+        self._draw_buildings(buildings, selected_building_id)
 
         if inspected_position is not None:
             cell = snapshot.board[inspected_position.y][inspected_position.x]
@@ -154,9 +154,9 @@ class BoardView:
                     self.screen.blit(overlay, self._cell_rect(cell.position).move(1, 1))
 
     def _draw_buildings(
-        self, buildings: dict[int, BuildingSnapshot], selected_tower_id: int | None
+        self, buildings: dict[int, BuildingSnapshot], selected_building_id: int | None
     ) -> None:
-        """Draw each building once, using selected art when it is available."""
+        """Draw each footprint once, preserving art paths and overlaying live health."""
         for building in buildings.values():
             rect = self._building_rect(building)
             sprite = self.building_sprites.get(building.kind)
@@ -180,7 +180,7 @@ class BoardView:
                 pygame.draw.rect(
                     self.screen, ring, rect.inflate(-4, -4), 2, border_radius=6
                 )
-            if building.id == selected_tower_id:
+            if building.id == selected_building_id:
                 pygame.draw.rect(
                     self.screen, (250, 226, 139), rect.inflate(-1, -1), 2,
                     border_radius=6,
@@ -194,6 +194,13 @@ class BoardView:
             if building.needs_repair:
                 warning = self.small_font.render("!", True, UNCHARGED_COLOR)
                 self.screen.blit(warning, (rect.right - 13, rect.top + 2))
+            if building.hp < building.max_hp:
+                bar = pygame.Rect(rect.x + 5, rect.y + 2, rect.width - 10, 3)
+                pygame.draw.rect(self.screen, BACKGROUND, bar)
+                pygame.draw.rect(
+                    self.screen, UNCHARGED_COLOR,
+                    (bar.x, bar.y, round(bar.width * building.hp / building.max_hp), bar.height),
+                )
 
     def _draw_enemies(self, snapshot: GameSnapshot) -> None:
         """Draw current world positions; snapshots have no stable enemy IDs."""
