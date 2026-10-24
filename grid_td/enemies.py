@@ -7,9 +7,9 @@ independent instances from string templates. `WaveRunner` calls
 targets, applies damage, and settles rewards, and `TextRenderer` only reads
 their current positions.
 
-Enemies move along `GridMap.route`. Saboteurs can also attack power nodes when
-they enter their attack range; they do not yet change routes or attack other
-building types. `path_progress` is physical distance along the centerline, in
+Enemies move along `GridMap.route`. Saboteurs can also attack power plants and
+power nodes when they enter their attack range; they do not yet change routes
+or attack other building types. `path_progress` is physical distance along the centerline, in
 small-cell world units, not waypoint indices.
 """
 

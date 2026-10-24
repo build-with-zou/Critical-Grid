@@ -13,7 +13,7 @@ Key state-flow boundaries:
 * New games start in DAY with no active wave runner.
 * `start_next_wave()` ends planning and creates a fresh NIGHT runner.
 * During NIGHT, `step()` spawns enemies, recalculates power, runs tower
-  attacks, moves enemies, then lets saboteurs attack power nodes. During DAY
+  attacks, moves enemies, then lets saboteurs attack power buildings. During DAY
   it leaves simulation time frozen.
 * `end_wave()` settles income, interest, and repairs, then enters the next
   DAY or records VICTORY. Core destruction records DEFEAT immediately.
@@ -921,7 +921,7 @@ class GameState:
 
         Order:
             Spawn due enemies first, recalculate power, run tower attacks,
-            advance enemies, and finally let saboteurs attack power nodes. This
+            advance enemies, and finally let saboteurs attack power buildings. This
             lets towers respond to newly spawned enemies while node attacks use
             the enemies' updated positions.
 
@@ -972,7 +972,7 @@ class GameState:
         self._towers_attack(delta)
         self._advance_enemies(delta)
         if self.core_hp > 0:
-            self._enemies_attack_nodes(delta)
+            self._enemies_attack_power_buildings(delta)
             self.recalculate_power()
 
         if self.core_hp <= 0:
@@ -1134,24 +1134,27 @@ class GameState:
 
         self.enemies = [enemy for enemy in self.enemies if enemy not in escaped]
 
-    def _enemies_attack_nodes(self, seconds: float) -> None:
-        """Let ready saboteurs damage the nearest living node in range.
+    def _enemies_attack_power_buildings(self, seconds: float) -> None:
+        """Let ready saboteurs damage power plants, then nearby power nodes.
 
         Saboteurs remain on the fixed route in this prototype. Their attack
         range uses the same Manhattan distance policy as tower targeting, and
-        each saboteur can perform at most one node attack per simulation step.
-        Destroyed nodes remain on the map with zero HP but stop transmitting
-        power during the following recalculation.
+        each saboteur can perform at most one building attack per simulation
+        step. Within range, power plants take priority over power nodes, and
+        the nearest building wins within the same priority. Destroyed power
+        buildings remain on the map with zero HP but stop supplying or
+        transmitting power during the following recalculation.
         """
-        nodes = [
+        targets = [
             building
             for building in self.buildings
-            if isinstance(building, PowerNode) and not building.is_destroyed
+            if isinstance(building, (PowerPlant, PowerNode))
+            and not building.is_destroyed
         ]
         for enemy in self.enemies:
             enemy.tick_attack_cooldown(seconds)
 
-        if not nodes:
+        if not targets:
             return
 
         for enemy in self.enemies:
@@ -1159,22 +1162,25 @@ class GameState:
                 continue
 
             enemy_position = enemy.world_position_on_route(self.grid_map.path)
-            target = min(
-                (
-                    node
-                    for node in nodes
-                    if world_distance(enemy_position, node.center) <= enemy.attack_range
-                ),
-                key=lambda node: world_distance(enemy_position, node.center),
-                default=None,
-            )
-            if target is None:
+            in_range = [
+                building
+                for building in targets
+                if world_distance(enemy_position, building.center) <= enemy.attack_range
+            ]
+            if not in_range:
                 continue
 
+            target = min(
+                in_range,
+                key=lambda building: (
+                    0 if isinstance(building, PowerPlant) else 1,
+                    world_distance(enemy_position, building.center),
+                ),
+            )
             target.take_damage(enemy.attack_damage)
             enemy.reset_attack_cooldown()
             if target.is_destroyed:
-                nodes.remove(target)
-                if not nodes:
+                targets.remove(target)
+                if not targets:
                     return
 

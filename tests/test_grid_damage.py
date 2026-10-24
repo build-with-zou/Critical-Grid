@@ -1,15 +1,15 @@
-"""Regression coverage for power-node health and saboteur attacks."""
+"""Regression coverage for power-building health and saboteur attacks."""
 
 import unittest
 
 from grid_td.enemies import create_enemy
 from grid_td.game_state import GameState
 from grid_td.map import create_demo_map
-from grid_td.position import Position
+from grid_td.position import Position, world_distance
 
 
 class GridDamageTest(unittest.TestCase):
-    """Verify that saboteurs can damage and disable power nodes."""
+    """Verify that saboteurs can damage and disable power buildings."""
 
     def setUp(self) -> None:
         self.game = GameState(create_demo_map())
@@ -58,7 +58,43 @@ class GridDamageTest(unittest.TestCase):
 
         self.assertEqual(node.hp, node.max_hp)
 
-    def test_only_saboteurs_attack_power_nodes(self) -> None:
+    def test_saboteur_attacks_power_plant(self) -> None:
+        plant = self.game.build("power_plant", Position(30, 6))
+        saboteur = self._place_saboteur()
+        saboteur.speed = 0.0
+
+        self.game.step(1.0)
+
+        self.assertEqual(plant.hp, plant.max_hp - saboteur.attack_damage)
+
+    def test_saboteur_prioritizes_power_plant_over_closer_node(self) -> None:
+        plant = self.game.build("power_plant", Position(30, 6))
+        node = self.game.build("power_node", Position(30, 9))
+        saboteur = self._place_saboteur()
+        saboteur.speed = 0.0
+
+        saboteur_position = saboteur.world_position_on_route(self.game.grid_map.path)
+        self.assertLess(
+            world_distance(saboteur_position, node.center),
+            world_distance(saboteur_position, plant.center),
+        )
+        self.game.step(1.0)
+
+        self.assertEqual(plant.hp, plant.max_hp - saboteur.attack_damage)
+        self.assertEqual(node.hp, node.max_hp)
+
+    def test_destroyed_plant_stops_supplying_power(self) -> None:
+        plant = self.game.build("power_plant", Position(30, 6))
+        plant.take_damage(plant.hp - 1)
+        saboteur = self._place_saboteur()
+        saboteur.speed = 0.0
+
+        self.game.step(1.0)
+
+        self.assertTrue(plant.is_destroyed)
+        self.assertEqual(self.game.latest_power_report.total_supply, 10)
+
+    def test_only_saboteurs_attack_power_buildings(self) -> None:
         node = self.game.build("power_node", Position(30, 9))
         self.game.start_next_wave()
         enemy = create_enemy("basic")
