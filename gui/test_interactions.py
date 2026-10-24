@@ -13,6 +13,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pygame
 
 from grid_td.buildings import GunTower, PowerPlant
+from grid_td.enemies import create_enemy
 from grid_td.game_state import GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
@@ -132,6 +133,118 @@ class BuildingInteractionTest(unittest.TestCase):
 
     def test_playable_view_renders_with_lifecycle_controls(self) -> None:
         self.click_cell(Position(30, 3))
+        self.gui.run(max_frames=2)
+
+    def prepare_enemy(self, path_progress: float = 34.0) -> None:
+        """Seed an armored enemy near a tower using a separate core fixture."""
+        enemy = create_enemy("armored")
+        enemy.id = 90
+        enemy.path_progress = path_progress
+        enemy.apply_slow(2.0)
+        self.gui.game = GameState(create_demo_map(), enemies=[enemy])
+        self.gui.game.build("gun_tower", Position(27, 0))
+
+    def click_enemy(self) -> None:
+        """Click the rendered position rather than the containing cell's center."""
+        snapshot = self.gui.game.snapshot()
+        enemy = next(
+            enemy for row in snapshot.board for cell in row for enemy in cell.enemies
+            if enemy.id == 90
+        )
+        self.gui._handle_board_click(self.gui.board._world_point(enemy.world_position, snapshot))
+
+    def test_enemy_details_follow_runtime_id_across_cells(self) -> None:
+        self.prepare_enemy(path_progress=0.0)
+        self.click_enemy()
+        enemy = self.gui._selected_enemy(self.gui.game.snapshot())
+        lines = "\n".join(Sidebar.enemy_inspection_lines(enemy))
+        for label in ("Armor 2", "Base speed", "Slowed: YES", "Kill reward", "Core damage"):
+            self.assertIn(label, lines)
+        self.gui.game.start_next_wave()
+        self.gui.game.step(1.0)
+        self.gui._refresh_selection(self.gui.game.snapshot())
+        moved = self.gui._selected_enemy(self.gui.game.snapshot())
+        self.assertEqual(moved.id, enemy.id)
+        self.assertNotEqual(moved.position, enemy.position)
+        self.assertIsNone(self.gui.selected_building_id)
+
+    def test_select_tower_set_target_and_clear_target(self) -> None:
+        self.prepare_enemy()
+        self.click_cell(Position(27, 0))
+        tower_id = self.gui.selected_building_id
+        self.gui._handle_button(self.gui.sidebar.target_button)
+        self.assertTrue(self.gui.targeting_mode)
+        self.click_enemy()
+        selected = self.gui._selected_tower(self.gui.game.snapshot())
+        self.assertEqual(selected.id, tower_id)
+        self.assertEqual(selected.target_enemy_id, 90)
+        self.assertFalse(self.gui.targeting_mode)
+        self.assertIn("Manual target: #90", Sidebar.inspection_lines(
+            self.gui.game.snapshot(), selected.position,
+        ))
+        self.gui._handle_button(self.gui.sidebar.clear_target_button)
+        self.assertIsNone(self.gui._selected_tower(self.gui.game.snapshot()).target_enemy_id)
+
+    def test_non_enemy_click_keeps_target_mode_and_escape_cancels(self) -> None:
+        self.prepare_enemy()
+        self.click_cell(Position(27, 0))
+        self.gui._begin_targeting()
+        self.click_cell(Position(0, 0))
+        self.assertTrue(self.gui.targeting_mode)
+        self.gui._cancel_build()
+        self.assertFalse(self.gui.targeting_mode)
+        self.assertIsNotNone(self.gui._selected_tower(self.gui.game.snapshot()))
+
+    def test_target_rejection_is_visible_and_can_be_retried(self) -> None:
+        self.prepare_enemy()
+        self.click_cell(Position(27, 0))
+        self.gui._begin_targeting()
+        with patch.object(self.gui.game, "set_tower_target", side_effect=ValueError("Enemy not found.")):
+            self.click_enemy()
+        self.assertEqual(self.gui.message, "Enemy not found.")
+        self.assertTrue(self.gui.targeting_mode)
+        self.click_enemy()
+        self.assertFalse(self.gui.targeting_mode)
+
+    def test_core_fallback_clears_manual_target_in_gui_snapshot(self) -> None:
+        self.prepare_enemy(path_progress=0.0)
+        self.click_cell(Position(27, 0))
+        self.gui._begin_targeting()
+        self.click_enemy()
+        self.gui.game.start_next_wave()
+        self.gui._advance_once(0.05)
+        selected = self.gui._selected_tower(self.gui.game.snapshot())
+        self.assertIsNone(selected.target_enemy_id)
+        self.assertIn("Manual target: Auto", Sidebar.inspection_lines(
+            self.gui.game.snapshot(), selected.position,
+        ))
+
+    def test_removed_enemy_selection_is_cleared(self) -> None:
+        self.prepare_enemy(path_progress=35.0)
+        self.click_enemy()
+        self.gui.game.start_next_wave()
+        self.gui.game.step(30.0)
+        self.gui._refresh_selection(self.gui.game.snapshot())
+        self.assertIsNone(self.gui.selected_enemy_id)
+
+    def test_enemy_picking_and_rendering_use_same_crowded_marker_positions(self) -> None:
+        enemies = []
+        for enemy_id in (90, 91):
+            enemy = create_enemy("basic")
+            enemy.id = enemy_id
+            enemy.path_progress = 10.0
+            enemies.append(enemy)
+        self.gui.game = GameState(create_demo_map(), enemies=enemies)
+        snapshot = self.gui.game.snapshot()
+        for enemy, center in self.gui.board._enemy_markers(snapshot):
+            self.assertEqual(self.gui.board.enemy_at(center, snapshot).id, enemy.id)
+        self.assertIsNone(self.gui.board.enemy_at((0, 0), snapshot))
+
+    def test_targeting_controls_render_with_manual_target(self) -> None:
+        self.prepare_enemy()
+        self.click_cell(Position(27, 0))
+        self.gui._begin_targeting()
+        self.click_enemy()
         self.gui.run(max_frames=2)
 
 
