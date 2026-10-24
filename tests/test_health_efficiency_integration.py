@@ -39,6 +39,45 @@ class HealthEfficiencyIntegrationTest(unittest.TestCase):
         self.assertEqual(mine.collect_income(), 12)
 
 
+class PowerPlantConditionTest(unittest.TestCase):
+    def test_damaged_plant_supply_uses_health_band(self) -> None:
+        game = GameState(create_demo_map(), gold=500)
+        plant = game.build("power_plant", Position(30, 6))
+        self.assertEqual(game.latest_power_report.total_supply, 20)
+
+        plant.take_damage(2)
+        game.recalculate_power()
+
+        self.assertEqual(plant.health_efficiency, 0.9)
+        self.assertEqual(plant.effective_power_supply, 9)
+        self.assertEqual(game.latest_power_report.total_supply, 19)
+
+        self.assertEqual(game.repair_building(plant.id), 2)
+        self.assertEqual(plant.effective_power_supply, 10)
+        self.assertEqual(game.latest_power_report.total_supply, 20)
+
+    def test_core_supply_does_not_scale_with_damage(self) -> None:
+        game = GameState(create_demo_map())
+        core = game.building_at(game.grid_map.core_position)
+        assert core is not None
+
+        core.take_damage(15)
+        game.recalculate_power()
+
+        self.assertEqual(core.health_efficiency, 0.6)
+        self.assertEqual(core.effective_power_supply, 10)
+        self.assertEqual(game.latest_power_report.total_supply, 10)
+
+    def test_destroyed_plant_supply_is_zero(self) -> None:
+        game = GameState(create_demo_map())
+        plant = game.build("power_plant", Position(30, 6))
+        plant.take_damage(plant.hp)
+        game.recalculate_power()
+
+        self.assertEqual(plant.effective_power_supply, 0)
+        self.assertEqual(game.latest_power_report.total_supply, 10)
+
+
 class TowerConditionEfficiencyTest(unittest.TestCase):
     def test_damaged_tower_uses_final_efficiency_for_damage_and_speed(self) -> None:
         game = GameState(create_demo_map())

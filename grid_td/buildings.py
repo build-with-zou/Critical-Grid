@@ -141,6 +141,11 @@ class Building:
         return max(0.0, electrical_efficiency) * self.health_efficiency
 
     @property
+    def effective_power_supply(self) -> int:
+        """Return supply after condition effects; ordinary types are unchanged."""
+        return self.power_supply
+
+    @property
     def is_power_source(self) -> bool:
         """Return whether the building provides positive power supply."""
         return self.power_supply > 0
@@ -218,6 +223,13 @@ class PowerPlant(Building):
             power_supply=10,
             power_draw=0,
         )
+
+    @property
+    def effective_power_supply(self) -> int:
+        """Return health-scaled supply; a destroyed plant provides nothing."""
+        if self.is_destroyed:
+            return 0
+        return round(self.power_supply * self.health_efficiency)
 
 
 @dataclass
