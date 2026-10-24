@@ -22,7 +22,7 @@ main.py / gui/gui.py
 
 `GameState.step(seconds)` is the simulation boundary. Each NIGHT step spawns due
 enemies, recalculates power, lets connected towers attack, advances enemies,
-then lets saboteurs attack power nodes. Wave settlement is separate:
+then lets saboteurs attack power plants and nodes. Wave settlement is separate:
 `end_wave()` applies
 mine income, debt interest, and repair costs, while `start_next_wave()` creates
 the next spawn runner.
@@ -36,10 +36,10 @@ The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
 power nodes using a six-world-unit coverage radius; ordinary buildings do not
 relay power. Every building has mutable health, condition-based efficiency,
-and gold-funded repair; saboteurs currently attack only power nodes. Other
-enemy building targets and dynamic routing are still pending. Treat the code as the
-behavioral source of truth when changing the prototype; use the design document
-for planned features and unresolved rules.
+and gold-funded repair. Saboteurs prioritize power plants over power nodes;
+other enemy building targets, route deviation, and dynamic routing are still
+pending. Treat the code as the behavioral source of truth when changing the
+prototype; use the design document for planned features and unresolved rules.
 
 Recommended reading order:
 
@@ -263,10 +263,11 @@ if building is not None:
 - `PowerReport.efficiency` remains the shared electrical efficiency. Each
   building's `Building.efficiency` is `PowerReport.efficiency ×
   Building.health_efficiency`, and mines/towers use this final value.
-- The condition multiplier currently affects consumer work: mine income, tower
-  damage, and tower attack speed. Damaged power plants and power nodes still
-  use their full supply and transmission values; reducing infrastructure
-  throughput by damage remains a later grid-damage rule.
+- The condition multiplier affects consumer work (mine income, tower damage,
+  and tower attack speed) and power-plant supply. A damaged plant supplies
+  `round(nominal supply × health_efficiency)`. The core keeps its nominal
+  supply until it is destroyed, and power nodes still transmit at full range
+  until destroyed; node transmission degradation remains a later rule.
 - `BuildingSnapshot` adds optional `repair_cost` and `health_efficiency` fields
   (defaults `0` and `1.0` for
   manually constructed snapshots). Runtime snapshots always quote the full
@@ -286,8 +287,8 @@ if building is not None:
 The current GUI reads selected building HP and repair price from snapshots but
 does not yet expose a repair button. A future control should call
 `repair_building(building.id)` and display any `ValueError`. Enemy building
-attacks still target only power nodes; health and repair interfaces are ready
-for additional building targets.
+attacks currently target power plants and nodes; health and repair interfaces
+are ready for additional building targets.
 
 ## Selling and Targeting
 
@@ -312,6 +313,24 @@ Every active enemy now carries a stable runtime `id`, assigned by `GameState`
 when it spawns. `EnemySnapshot` exposes it as a required `id` field, and
 `BuildingSnapshot` exposes `target_enemy_id` (default `None`) for towers. Tools
 that construct these snapshots by hand must provide `EnemySnapshot.id`.
+
+## Combat Effects
+
+- Cannon towers deal full damage to their primary target and apply splash
+  damage to other living enemies within **3.0 world units** of that target's
+  continuous position. Splash uses **50%** of the cannon's final damage and is
+  not clipped to the tower's attack range. The primary target is not hit twice,
+  and splash still resolves if the primary target dies from the direct hit.
+- Armored enemies have **25% damage reduction**. All damage routed through
+  `Enemy.take_damage()` is reduced, including cannon splash and slow-tower
+  damage. Other enemy templates have no reduction.
+- Saboteurs attack power plants and power nodes while remaining on the fixed
+  route. Within attack range, a power plant takes priority over a node; the
+  nearest target wins within the same priority. Destroying a plant removes its
+  supply, and destroying a node disconnects downstream coverage on the next
+  power recalculation.
+- Power-node transmission remains full while the node is alive; health-based
+  transmission degradation is still pending.
 
 ## Emergency Commands
 
@@ -389,11 +408,14 @@ python3 -m unittest discover -s tests
 ## Current Features
 
 - 36 by 21 small-cell map with configurable rectangular building footprints.
-- Fixed enemy route with continuous world-space movement and four enemy types.
-- Buildable mines, power plants, power nodes, and three tower types.
+- Fixed enemy route with continuous world-space movement and four enemy types,
+  including armored damage reduction.
+- Buildable mines, power plants, power nodes, and three tower types, including
+  cannon splash damage.
 - Radius-based power-grid connection and shared efficiency.
-- Reduced building efficiency when power is insufficient or building health
-  has dropped below its condition band.
+- Health-scaled power-plant supply and reduced building efficiency when power is
+  insufficient or building health has dropped below its condition band.
+- Saboteurs attacking power plants and nodes with plant priority.
 - DAY/NIGHT lifecycle with explicit Start Night and wave settlement.
 - Wave spawning, mine income, debt interest, kill rewards, and overload fees.
 - Core overdraft, tower overload, wave intel, building repair, and selling.
@@ -410,8 +432,8 @@ The current prototype is smaller than the full V0.2 design. The main remaining
 work is:
 
 - Dynamic pathfinding and building-influenced route changes.
-- Combat completion: cannon splash, armored damage reduction, enemy attacks on
-  more building types, and saboteur route deviation.
+- Combat completion: enemy attacks on more building types, saboteur route
+  deviation, and node transmission degradation.
 - Eight-night progression and balance.
 - Per-building power priority, time-scale controls, and richer wave intel.
 - GUI follow-ups such as repair, sell, targeting controls, and attack/path
