@@ -195,7 +195,10 @@ contract:
   drawing; `position` is the containing small cell. `speed` is in world units
   per second, and `path_progress` is world distance, **not a route-list index**.
   Do not use `route[int(path_progress)]` or reconstruct positions from waypoint
-  indices.
+  indices. `EnemySnapshot.armor` exposes flat armor for inspection and display.
+- `BuildingSnapshot` also exposes `repair_cost`, `health_efficiency`, and
+  `target_enemy_id` for repair quotes, condition output, and manual-target
+  indicators.
 - Entity-level `position_on_route()` and `has_reached_core()` take a `RoutePath`
   (`grid_map.path`), rather than a waypoint tuple. Presentation code should read
   snapshots instead of calling these domain methods.
@@ -284,11 +287,12 @@ if building is not None:
   still charges 5 gold per flagged building and clears the flag without
   restoring HP. Buying HP repair does not cancel that fee.
 
-The current GUI reads selected building HP and repair price from snapshots but
-does not yet expose a repair button. A future control should call
-`repair_building(building.id)` and display any `ValueError`. Enemy building
-attacks currently target power plants and nodes; health and repair interfaces
-are ready for additional building targets.
+The current GUI exposes building sale, HP repair, manual tower targeting,
+enemy inspection, speed controls, and automatic bullet time. It reads display
+data from snapshots and sends gameplay changes through public commands. Enemy
+building attacks currently target power plants and nodes; further attack
+targets, attack events, power-source topology, and route previews remain future
+work.
 
 ## Selling and Targeting
 
@@ -382,6 +386,7 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 │   ├── hud.py              # Status bar and event messages
 │   ├── menu.py             # Start and level-selection screens
 │   ├── styles.py           # Shared layout and colors
+│   ├── test_interactions.py  # GUI interaction tests
 │   └── assets/             # Building sprites and review previews
 └── tests/
     └── test_*.py           # Core rules and integration tests
@@ -407,8 +412,16 @@ demo uses only the Python standard library.
 
 ## Test
 
+Core rules and integration tests:
+
 ```bash
 python3 -m unittest discover -s tests
+```
+
+GUI interaction tests use the environment with the GUI dependencies installed:
+
+```bash
+.venv/bin/python -m unittest gui.test_interactions
 ```
 
 ## Current Features
@@ -429,7 +442,8 @@ python3 -m unittest discover -s tests
 - Building health, condition efficiency, and instant gold-funded repairs,
   including grid recovery.
 - Text-based map rendering.
-- Pygame GUI with map rendering, build preview, HUD, tower controls, intel,
+- Pygame GUI with map rendering, build preview, HUD, building sale and repair,
+  manual tower targeting, enemy inspection, speed/bullet-time controls, intel,
   overdraft, and the DAY/NIGHT flow.
 
 ## Next Steps
@@ -441,7 +455,7 @@ work is:
 - Combat completion: enemy attacks on more building types, saboteur route
   deviation, and node transmission degradation.
 - Eight-night progression and balance.
-- Per-building power priority, time-scale controls, and richer wave intel.
-- GUI follow-ups such as repair, sell, targeting controls, and attack/path
-  visualization.
+- Per-building power priority and richer wave intel.
+- GUI visualization for attack events, power-source topology, and route
+  previews.
 
