@@ -1091,6 +1091,7 @@ class GameState:
         A manual target from ``set_tower_target()`` wins while it stays alive
         and inside the tower's range. When it becomes invalid the tower clears
         it and falls back to the furthest-progressing living enemy within range.
+        Ties in route progress prefer the enemy nearest to the tower center.
 
         Range starts at the building's geometric center and ends at the
         enemy's continuous centerline position. world_distance() is the single
@@ -1121,7 +1122,21 @@ class GameState:
                 tower.center, enemy.world_position_on_route(self.grid_map.path)
             ) <= tower.range
         ]
-        return max(targets, key=lambda enemy: enemy.path_progress, default=None)
+        if not targets:
+            return None
+
+        best_progress = max(enemy.path_progress for enemy in targets)
+        best_progress_targets = [
+            enemy for enemy in targets if enemy.path_progress == best_progress
+        ]
+        if len(best_progress_targets) == 1:
+            return best_progress_targets[0]
+        return min(
+            best_progress_targets,
+            key=lambda enemy: world_distance(
+                tower.center, enemy.world_position_on_route(self.grid_map.path)
+            ),
+        )
 
     def _advance_enemies(self, seconds: float) -> None:
         """Advance enemies and convert route-end arrivals into core damage."""
