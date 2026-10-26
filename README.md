@@ -195,10 +195,12 @@ contract:
   drawing; `position` is the containing small cell. `speed` is in world units
   per second, and `path_progress` is world distance, **not a route-list index**.
   Do not use `route[int(path_progress)]` or reconstruct positions from waypoint
-  indices. `EnemySnapshot.armor` exposes flat armor for inspection and display.
-- `BuildingSnapshot` also exposes `repair_cost`, `health_efficiency`, and
-  `target_enemy_id` for repair quotes, condition output, and manual-target
-  indicators.
+  indices. `EnemySnapshot.armor`, `attack_range`, and `attack_damage` expose
+  combat details for inspection.
+- `BuildingSnapshot` also exposes `repair_cost`, `health_efficiency`,
+  `effective_power_supply`, `splash_radius`, `splash_damage_ratio`, and
+  `target_enemy_id` for repair quotes, condition output, combat previews, and
+  manual-target indicators.
 - Entity-level `position_on_route()` and `has_reached_core()` take a `RoutePath`
   (`grid_map.path`), rather than a waypoint tuple. Presentation code should read
   snapshots instead of calling these domain methods.
@@ -308,8 +310,8 @@ Two command families extend the GUI-facing surface beyond build and repair.
 - `set_tower_target(tower_id, enemy_id) -> None` forces one tower to prefer a
   specific living enemy. The manual target wins only while it stays alive and
   inside the tower's range; otherwise the tower clears it and falls back to the
-  default furthest-progressing enemy. `clear_tower_target(tower_id)` removes the
-  manual target explicitly. Both validate positive-integer IDs (booleans
+  furthest-progressing enemy, using nearest distance to break equal-progress
+  ties. `clear_tower_target(tower_id)` removes the manual target explicitly. Both validate positive-integer IDs (booleans
   rejected) and raise `ValueError` for missing towers, dead/missing enemies, a
   destroyed core, or an ended game, without changing state.
 

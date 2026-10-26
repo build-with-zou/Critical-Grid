@@ -105,6 +105,9 @@ class BuildingSnapshot:
     repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
     target_enemy_id: int | None = None  # Manual target enemy ID; None for auto.
     health_efficiency: float = 1.0  # Condition multiplier before power efficiency.
+    effective_power_supply: int = 0  # Health-scaled supply for connected power plants.
+    splash_radius: float | None = None  # Cannon splash radius; None for other towers.
+    splash_damage_ratio: float | None = None  # Cannon splash multiplier; None otherwise.
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,8 @@ class EnemySnapshot:
     is_slowed: bool  # Whether a slow effect is currently active.
     world_position: WorldPosition  # Continuous position in small-cell units.
     armor: int = 0  # Flat damage removed from each positive incoming hit.
+    attack_range: float = 0.0  # World-unit range for building attacks.
+    attack_damage: int = 0  # Damage per building attack.
 
 
 @dataclass(frozen=True)
@@ -457,6 +462,14 @@ class GameState:
             repair_cost=building.repair_cost,
             target_enemy_id=tower.target_enemy_id if tower is not None else None,
             health_efficiency=building.health_efficiency,
+            effective_power_supply=building.effective_power_supply,
+            splash_radius=(
+                building.SPLASH_RADIUS if isinstance(building, CannonTower) else None
+            ),
+            splash_damage_ratio=(
+                building.SPLASH_DAMAGE_RATIO
+                if isinstance(building, CannonTower) else None
+            ),
         )
 
     def _building_kind(self, building: Building) -> str:
@@ -489,6 +502,8 @@ class GameState:
                     is_slowed=enemy.is_slowed,
                     world_position=world_position,
                     armor=enemy.armor,
+                    attack_range=enemy.attack_range,
+                    attack_damage=enemy.attack_damage,
                 )
             )
 
@@ -1091,6 +1106,7 @@ class GameState:
         A manual target from ``set_tower_target()`` wins while it stays alive
         and inside the tower's range. When it becomes invalid the tower clears
         it and falls back to the furthest-progressing living enemy within range.
+        Ties in route progress prefer the enemy nearest to the tower center.
 
         Range starts at the building's geometric center and ends at the
         enemy's continuous centerline position. world_distance() is the single
@@ -1121,7 +1137,21 @@ class GameState:
                 tower.center, enemy.world_position_on_route(self.grid_map.path)
             ) <= tower.range
         ]
-        return max(targets, key=lambda enemy: enemy.path_progress, default=None)
+        if not targets:
+            return None
+
+        best_progress = max(enemy.path_progress for enemy in targets)
+        best_progress_targets = [
+            enemy for enemy in targets if enemy.path_progress == best_progress
+        ]
+        if len(best_progress_targets) == 1:
+            return best_progress_targets[0]
+        return min(
+            best_progress_targets,
+            key=lambda enemy: world_distance(
+                tower.center, enemy.world_position_on_route(self.grid_map.path)
+            ),
+        )
 
     def _advance_enemies(self, seconds: float) -> None:
         """Advance enemies and convert route-end arrivals into core damage."""

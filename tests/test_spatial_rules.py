@@ -318,6 +318,20 @@ class ContinuousCombatTest(unittest.TestCase):
                                            enemy.world_position_on_route(self.game.grid_map.path))
         self.assertEqual(self.game.grid_map.path.length, length)
 
+    def test_equal_progress_breaks_ties_by_distance(self) -> None:
+        far = Enemy("Far", max_hp=10, speed=0, damage_to_core=1, reward=0,
+                    path_progress=30.0)
+        near = Enemy("Near", max_hp=10, speed=0, damage_to_core=1, reward=0,
+                     path_progress=30.0)
+        self.game.enemies = [far, near]
+
+        with patch.object(
+            far, "world_position_on_route", return_value=WorldPosition(28.5, 10.5)
+        ), patch.object(
+            near, "world_position_on_route", return_value=WorldPosition(31.5, 7.5)
+        ):
+            self.assertIs(self.game._select_target(self.tower), near)
+
     def test_dead_targets_do_not_consume_another_towers_attack(self) -> None:
         second = self.game.build("gun_tower", Position(30, 9))
         first_enemy = Enemy("First", max_hp=1, speed=0, damage_to_core=1,
