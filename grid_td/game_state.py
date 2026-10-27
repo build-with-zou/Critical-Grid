@@ -122,7 +122,12 @@ class EnemySnapshot:
 
 @dataclass(frozen=True)
 class BuildPreview:
-    """Read-only placement result; build() always rechecks before spending."""
+    """Read-only placement geometry and potential ranges, without reserving a build.
+
+    Power reach describes a transmitter's potential coverage, not a promise
+    that the candidate is connected. Optional defaults preserve callers that
+    construct footprint-only previews. build() rechecks before spending.
+    """
 
     kind: str
     position: Position
@@ -131,6 +136,9 @@ class BuildPreview:
     occupied_cells: tuple[Position, ...]
     is_valid: bool
     reason: str
+    center: WorldPosition | None = None  # Geometric center of the full candidate footprint.
+    attack_range: float | None = None  # Tower range, including any full-high-ground bonus.
+    power_radius: float | None = None  # Active grid's radius for transmitter candidates only.
 
 
 @dataclass(frozen=True)
@@ -525,12 +533,15 @@ class GameState:
             raise ValueError(f"Not enough gold. Need {building.cost}, have {self.gold}.")
 
     def preview_build(self, kind: str, position: Position) -> BuildPreview:
-        """Return footprint cells, validity and a rejection reason, without mutation.
+        """Return placement validity and authoritative potential ranges without mutation.
 
         Illegal placement, insufficient gold and terminal games return an
         invalid preview. Unknown kinds or malformed arguments raise ValueError
         because no valid candidate geometry can be determined. Successful
-        previews use an empty reason. The returned value is immutable.
+        previews use an empty reason. Ranges remain available for invalid
+        positions so the GUI can explain a rejected placement. Tower range
+        uses the same candidate as build(), and transmission reach uses this
+        game's configured grid radius. The returned value is immutable.
         """
         building = self._build_candidate(kind, position)
         reason = ""
@@ -541,6 +552,9 @@ class GameState:
         return BuildPreview(
             kind=kind, position=position, width=building.width, height=building.height,
             occupied_cells=building.occupied_cells(), is_valid=not reason, reason=reason,
+            center=building.center,
+            attack_range=building.range if isinstance(building, Tower) else None,
+            power_radius=self.power_grid.connection_radius if building.TRANSMITS_POWER else None,
         )
 
     def build(self, kind: str, position: Position) -> Building:

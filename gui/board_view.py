@@ -7,6 +7,7 @@ import pygame
 from grid_td.game_state import BuildPreview, BuildingSnapshot, GameSnapshot
 from grid_td.position import Position, WorldPosition, world_distance
 from gui.styles import (
+    ATTACK_RANGE_COLOR,
     BACKGROUND,
     BOARD_LEFT,
     BOARD_TOP,
@@ -20,6 +21,7 @@ from gui.styles import (
     LIMITED_COLOR,
     MINE_SITE,
     PANEL,
+    POWER_RANGE_COLOR,
     ROUTE,
     SYMBOL_COLORS,
     TEXT,
@@ -78,9 +80,11 @@ class BoardView:
                 if cell.building is not None:
                     buildings[cell.building.id] = cell.building
 
-        # Keep range beneath units; draw interaction outlines last.
+        # Keep candidate coverage beneath units and the placement outline on top.
         selected = buildings.get(selected_tower_id)
-        if selected is not None and selected.range is not None:
+        if preview is not None:
+            self._draw_build_range(snapshot, preview)
+        elif selected is not None and selected.range is not None:
             self._draw_range(snapshot, selected)
         self._draw_enemies(snapshot)
         self._draw_buildings(buildings, selected_tower_id)
@@ -99,10 +103,10 @@ class BoardView:
             )
         if preview is not None:
             self._draw_preview(preview, board_rect)
-        self._draw_legend()
+        self._draw_legend(preview)
 
-    def _draw_legend(self) -> None:
-        """Label terrain and state colors without obscuring the playable map."""
+    def _draw_legend(self, preview: BuildPreview | None = None) -> None:
+        """Explain potential coverage without promising the candidate has power."""
         for x, label, color in (
             (35, "Road", ROUTE),
             (120, "Mine site", MINE_SITE),
@@ -114,25 +118,77 @@ class BoardView:
             pygame.draw.rect(self.screen, color, pygame.Rect(x, 520, 12, 12))
             text = self.legend_font.render(label, True, TEXT)
             self.screen.blit(text, (x + 17, 518))
-        hint = self.legend_font.render(
-            "Grid status is shown on buildings; connections can cross empty cells.",
-            True, TEXT,
-        )
+        label = "Grid status is shown on buildings; connections can cross empty cells."
+        color = TEXT
+        if preview is not None:
+            power_radius = getattr(preview, "power_radius", None)
+            attack_range = getattr(preview, "attack_range", None)
+            if power_radius is not None:
+                label = f"Power reach: {power_radius:g} world units; requires a grid connection."
+                color = POWER_RANGE_COLOR
+            elif attack_range is not None:
+                label = f"Attack range: {attack_range:g} world units; requires power to attack."
+                color = ATTACK_RANGE_COLOR
+            if not preview.is_valid:
+                color = UNCHARGED_COLOR
+        hint = self.legend_font.render(label, True, color)
         self.screen.blit(hint, (35, 540))
 
     def _draw_range(self, snapshot: GameSnapshot, tower: BuildingSnapshot) -> None:
-        """Shade cells inside the core's current world-distance range policy."""
-        overlay = pygame.Surface((CELL - 2, CELL - 2), pygame.SRCALPHA)
+        """Display the selected tower using the same geometry as hover previews."""
         color = (
-            (111, 214, 228, 60)
-            if tower.connected_to_grid and tower.efficiency > 0
-            else (243, 103, 101, 60)
+            ATTACK_RANGE_COLOR if tower.connected_to_grid and tower.efficiency > 0
+            else UNCHARGED_COLOR
         )
-        overlay.fill(color)
-        for row in snapshot.board:
-            for cell in row:
-                if world_distance(tower.center, cell.position.center) <= tower.range:
-                    self.screen.blit(overlay, self._cell_rect(cell.position).move(1, 1))
+        self._draw_range_cells(snapshot, tower.center, tower.range, color)
+
+    def _draw_build_range(self, snapshot: GameSnapshot, preview: BuildPreview) -> None:
+        """Read candidate ranges from the public preview, never live entities or constants."""
+        # Older core previews can still display their footprint until ranges are exposed.
+        center = getattr(preview, "center", None)
+        if center is None:
+            return
+        for radius, color in (
+            (getattr(preview, "power_radius", None), POWER_RANGE_COLOR),
+            (getattr(preview, "attack_range", None), ATTACK_RANGE_COLOR),
+        ):
+            if radius is not None:
+                self._draw_range_cells(
+                    snapshot, center, radius,
+                    color if preview.is_valid else UNCHARGED_COLOR,
+                )
+
+    @staticmethod
+    def _range_cells(
+        snapshot: GameSnapshot, center: WorldPosition, radius: float,
+    ) -> frozenset[Position]:
+        """Test cell centers with the core's shared distance policy and inclusive boundary."""
+        return frozenset(
+            cell.position for row in snapshot.board for cell in row
+            if world_distance(center, cell.position.center) <= radius
+        )
+
+    def _draw_range_cells(
+        self, snapshot: GameSnapshot, center: WorldPosition, radius: float,
+        color: tuple[int, int, int],
+    ) -> None:
+        """Shade in-bounds cells and outline the coverage without hiding map occupants."""
+        cells = self._range_cells(snapshot, center, radius)
+        overlay = pygame.Surface((CELL - 2, CELL - 2), pygame.SRCALPHA)
+        overlay.fill((*color, 60))
+        for position in cells:
+            rect = self._cell_rect(position)
+            self.screen.blit(overlay, rect.move(1, 1))
+            for neighbor, start, end in (
+                (Position(position.x - 1, position.y), rect.topleft, (rect.left, rect.bottom - 1)),
+                (Position(position.x + 1, position.y), (rect.right - 1, rect.top),
+                 (rect.right - 1, rect.bottom - 1)),
+                (Position(position.x, position.y - 1), rect.topleft, (rect.right - 1, rect.top)),
+                (Position(position.x, position.y + 1), (rect.left, rect.bottom - 1),
+                 (rect.right - 1, rect.bottom - 1)),
+            ):
+                if neighbor not in cells:
+                    pygame.draw.line(self.screen, color, start, end)
 
     def _draw_buildings(
         self, buildings: dict[int, BuildingSnapshot], selected_tower_id: int | None
@@ -188,7 +244,7 @@ class BoardView:
                     self.screen.blit(label, self._cell_rect(cell.position).move(2, 1).topleft)
 
     def _draw_preview(self, preview: BuildPreview, board_rect: pygame.Rect) -> None:
-        """Mark the entire candidate footprint and its placement validity."""
+        """Keep the candidate footprint distinct from its coverage and clip edge placements."""
         rect = pygame.Rect(
             BOARD_LEFT + preview.position.x * CELL,
             BOARD_TOP + preview.position.y * CELL,
@@ -199,10 +255,11 @@ class BoardView:
         overlay = pygame.Surface(rect.size, pygame.SRCALPHA)
         overlay.fill((*color, 65))
         # An invalid edge placement can extend past the map; confine its preview.
-        self.screen.set_clip(board_rect)
+        previous_clip = self.screen.get_clip()
+        self.screen.set_clip(board_rect.clip(previous_clip))
         self.screen.blit(overlay, rect.topleft)
         pygame.draw.rect(self.screen, color, rect, 3)
-        self.screen.set_clip(None)
+        self.screen.set_clip(previous_clip)
 
     @staticmethod
     def _cell_rect(position: Position) -> pygame.Rect:
