@@ -21,8 +21,9 @@ main.py / gui/gui.py
 ```
 
 `GameState.step(seconds)` is the simulation boundary. Each NIGHT step spawns due
-enemies, recalculates power, lets connected towers attack, advances enemies,
-then lets saboteurs attack power plants and nodes. Wave settlement is separate:
+enemies and assigns their paths, recalculates power, lets connected towers
+attack, advances enemies, then resolves breach attacks and saboteur attacks on
+power plants and nodes. Wave settlement is separate:
 `end_wave()` applies
 mine income, debt interest, and repair costs, while `start_next_wave()` creates
 the next spawn runner.
@@ -36,10 +37,12 @@ The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
 power nodes using a six-world-unit coverage radius; ordinary buildings do not
 relay power. Every building has mutable health, condition-based efficiency,
-and gold-funded repair. Saboteurs prioritize power plants over power nodes;
-other enemy building targets, route deviation, and dynamic routing are still
-pending. Treat the code as the behavioral source of truth when changing the
-prototype; use the design document for planned features and unresolved rules.
+and gold-funded repair. Saboteurs prioritize power plants over power nodes.
+Enemies now use per-enemy open-ground pathfinding with buildings as blockers
+and automatic breach attacks; other enemy building targets, saboteur route
+deviation, build-on-road rules, and GUI route previews are still pending.
+Treat the code as the behavioral source of truth when changing the prototype;
+use the design document for planned features and unresolved rules.
 
 Recommended reading order:
 
@@ -169,7 +172,9 @@ wide line between waypoints. `GridMap.path` is an immutable `RoutePath` with
 world-space points at waypoint cell centers. The demo path length is 36 units,
 preserving the original travel time after scaling enemy speeds by three.
 Progress and arrival use physical path distance, independent of waypoint
-spacing; arrival remains at the final core-adjacent centerline point.
+spacing; the legacy `GridMap.path` still provides spawn and fallback geometry.
+Runtime enemies now store a per-enemy `RoutePath` assigned by the pathfinding
+module, so `EnemySnapshot.path` is the authoritative route preview source.
 
 Combat uses the building center and the enemy's continuous world position.
 The `world_distance()` function in `position.py` is the shared combat-distance
@@ -196,7 +201,9 @@ contract:
   per second, and `path_progress` is world distance, **not a route-list index**.
   Do not use `route[int(path_progress)]` or reconstruct positions from waypoint
   indices. `EnemySnapshot.armor`, `attack_range`, and `attack_damage` expose
-  combat details for inspection.
+  combat details for inspection. `EnemySnapshot.path` contains the current
+  per-enemy route, and `EnemySnapshot.breach_target_id` names the building the
+  enemy plans to break, if any.
 - `BuildingSnapshot` also exposes `repair_cost`, `health_efficiency`,
   `effective_power_supply`, `splash_radius`, `splash_damage_ratio`, and
   `target_enemy_id` for repair quotes, condition output, combat previews, and
@@ -332,11 +339,16 @@ that construct these snapshots by hand must provide `EnemySnapshot.id`.
   **1 damage**, and clamps at zero. This applies to cannon direct hits, cannon
   splash, and slow-tower damage; other enemy templates have armor 0.
   `EnemySnapshot.armor` exposes the value for presentation.
-- Saboteurs attack power plants and power nodes while remaining on the fixed
-  route. Within attack range, a power plant takes priority over a node; the
-  nearest target wins within the same priority. Destroying a plant removes its
-  supply, and destroying a node disconnects downstream coverage on the next
-  power recalculation.
+- Enemies pathfind independently to a core-adjacent cell. If the normal route
+  takes more than 1.5 times the breach route, or no route exists, they target
+  the first building on the breach path. All enemy types can breach with
+  type-specific `breach_damage`; destroyed buildings become passable rubble and
+  repairing them re-blocks the path.
+- Saboteurs attack power plants and power nodes while following their own path.
+  Within attack range, a power plant takes priority over a node; the nearest
+  target wins within the same priority. Destroying a plant removes its supply,
+  and destroying a node disconnects downstream coverage on the next power
+  recalculation.
 - Power-node transmission remains full while the node is alive; health-based
   transmission degradation is still pending.
 - Deterministic strength baselines live in
@@ -374,7 +386,7 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 │   ├── __init__.py         # Package entry
 │   ├── position.py         # Cells, world positions, footprints and distance policy
 │   ├── path.py             # Distance-based fixed-route sampling
-│   ├── pathing.py          # Experimental open-ground and breach pathfinding
+│   ├── pathing.py          # Per-enemy open-ground and breach pathfinding
 │   ├── map.py              # Grid map, route, mine sites, terrain capabilities
 │   ├── buildings.py        # Buildings and tower classes
 │   ├── enemies.py          # Enemy classes and enemy templates
@@ -430,8 +442,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 ## Current Features
 
 - 36 by 21 small-cell map with configurable rectangular building footprints.
-- Fixed enemy route with continuous world-space movement and four enemy types,
-  including flat armor on armored enemies.
+- Per-enemy open-ground pathfinding with buildings as blockers, automatic
+  breach attacks, and four enemy types including flat armor.
 - Buildable mines, power plants, power nodes, and three tower types, including
   cannon splash damage.
 - Radius-based power-grid connection and shared efficiency.
@@ -454,7 +466,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 The current prototype is smaller than the full V0.2 design. The main remaining
 work is:
 
-- Dynamic pathfinding and building-influenced route changes.
+- Complete pathfinding integration: build-on-road and terrain-capability
+  rules, route-aware construction validation, and GUI path previews.
 - Combat completion: enemy attacks on more building types, saboteur route
   deviation, and node transmission degradation.
 - Eight-night progression and balance.
