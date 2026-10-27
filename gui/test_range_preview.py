@@ -108,7 +108,7 @@ class RangeDrawingTest(unittest.TestCase):
             patch.object(self.board, "_draw_preview", side_effect=lambda *args: calls.append("footprint")),
         ):
             self.board.draw(self.snapshot, None, None, Position(30, 9), self.preview())
-        self.assertEqual(calls, ["range", "enemies", "buildings", "footprint"])
+        self.assertEqual(calls, ["range", "buildings", "enemies", "footprint"])
 
     def test_rendering_does_not_build_spend_gold_or_mutate_game_state(self) -> None:
         before = self.game.snapshot()

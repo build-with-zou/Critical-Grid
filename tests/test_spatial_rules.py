@@ -70,7 +70,7 @@ class WorldGeometryTest(unittest.TestCase):
     def test_sparse_custom_roads_reserve_every_traversed_cell(self) -> None:
         grid_map = replace(empty_map(), road_cells=None)
         self.assertTrue(grid_map.is_route(Position(7, 18)))
-        self.assertFalse(grid_map.is_buildable(Position(7, 18)))
+        self.assertTrue(grid_map.is_buildable(Position(7, 18)))
         with self.assertRaises(ValueError):
             replace(grid_map, road_cells=frozenset(grid_map.route))
         for changes in ({"width": 0}, {"route": ()},
@@ -168,8 +168,10 @@ class FootprintPlacementTest(unittest.TestCase):
         self.assertTrue(self.game.preview_build("gun_tower", Position(17, 0)).is_valid)
 
     def test_terrain_is_checked_under_the_entire_footprint(self) -> None:
-        self.game.grid_map = replace(self.game.grid_map,
-                                     illegal_ground_positions=frozenset({Position(4, 4)}))
+        self.game.grid_map = replace(
+            self.game.grid_map,
+            illegal_ground_positions=frozenset({Position(4, 4), Position(1, 18)}),
+        )
         self.assert_rejected("gun_tower", Position(2, 2))
         self.assert_rejected("gun_tower", Position(0, 16))
         # A free anchor alone cannot guarantee a complete footprint will fit.
@@ -317,6 +319,20 @@ class ContinuousCombatTest(unittest.TestCase):
             metric.assert_called_once_with(self.tower.center,
                                            enemy.world_position_on_route(self.game.grid_map.path))
         self.assertEqual(self.game.grid_map.path.length, length)
+
+    def test_equal_progress_breaks_ties_by_distance(self) -> None:
+        far = Enemy("Far", max_hp=10, speed=0, damage_to_core=1, reward=0,
+                    path_progress=30.0)
+        near = Enemy("Near", max_hp=10, speed=0, damage_to_core=1, reward=0,
+                     path_progress=30.0)
+        self.game.enemies = [far, near]
+
+        with patch.object(
+            far, "world_position_on_route", return_value=WorldPosition(28.5, 10.5)
+        ), patch.object(
+            near, "world_position_on_route", return_value=WorldPosition(31.5, 7.5)
+        ):
+            self.assertIs(self.game._select_target(self.tower), near)
 
     def test_dead_targets_do_not_consume_another_towers_attack(self) -> None:
         second = self.game.build("gun_tower", Position(30, 9))

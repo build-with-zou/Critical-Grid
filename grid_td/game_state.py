@@ -2,9 +2,9 @@
 
 `GameState` is the single runtime coordinator. It owns the map, gold/debt,
 buildings, enemies, core health, wave progress, and result state. It exposes
-operations for building, repair, intel, overdraft, overload, wave settlement, and each
-time step; `PowerGrid`, `WaveRunner`, `Building`, and `Enemy` provide the
-local rules it calls. Read-only presentation code should use `snapshot()`
+operations for building, selling, repair, targeting, intel, overdraft,
+overload, wave settlement, and each time step; `PowerGrid`, `WaveRunner`,
+`Building`, and `Enemy` provide the local rules it calls. Read-only presentation code should use `snapshot()`
 instead of reading mutable attributes directly.
 
 Key state-flow boundaries:
@@ -13,7 +13,7 @@ Key state-flow boundaries:
 * New games start in DAY with no active wave runner.
 * `start_next_wave()` ends planning and creates a fresh NIGHT runner.
 * During NIGHT, `step()` spawns enemies, recalculates power, runs tower
-  attacks, moves enemies, then lets saboteurs attack power nodes. During DAY
+  attacks, moves enemies, then lets saboteurs attack power buildings. During DAY
   it leaves simulation time frozen.
 * `end_wave()` settles income, interest, and repairs, then enters the next
   DAY or records VICTORY. Core destruction records DEFEAT immediately.
@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
+from typing import ClassVar
 
 from grid_td.buildings import (
     Building,
@@ -44,6 +45,8 @@ from grid_td.buildings import (
 )
 from grid_td.enemies import Enemy
 from grid_td.map import GridMap
+from grid_td.path import RoutePath
+from grid_td.pathing import find_path
 from grid_td.position import DISTANCE_METRIC, Position, WorldPosition, world_distance
 from grid_td.power_grid import PowerGrid, PowerReport
 from grid_td.waves import WaveRunner, create_demo_waves
@@ -69,7 +72,7 @@ class PowerSnapshot:
     connected_count: int  # Number of buildings reachable from the core grid.
     total_supply: int  # Connected power supply.
     total_demand: int  # Connected power demand.
-    efficiency: float  # Shared connected-building efficiency multiplier.
+    efficiency: float  # Shared electrical multiplier before condition scaling.
 
 
 @dataclass(frozen=True)
@@ -92,7 +95,7 @@ class BuildingSnapshot:
     power_supply: int  # Power provided when connected.
     power_draw: int  # Power consumed when connected.
     connected_to_grid: bool  # Whether the latest power pass reached it.
-    efficiency: float  # Latest work multiplier.
+    efficiency: float  # Final work multiplier after power and condition scaling.
     needs_repair: bool  # Whether wave settlement should charge repair cost.
     width: int
     height: int
@@ -102,12 +105,18 @@ class BuildingSnapshot:
     cooldown_remaining: float | None = None  # Tower cooldown; `None` for non-towers.
     is_overloaded: bool = False  # Tower overload flag; always false for non-towers.
     repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
+    target_enemy_id: int | None = None  # Manual target enemy ID; None for auto.
+    health_efficiency: float = 1.0  # Condition multiplier before power efficiency.
+    effective_power_supply: int = 0  # Health-scaled supply for connected power plants.
+    splash_radius: float | None = None  # Cannon splash radius; None for other towers.
+    splash_damage_ratio: float | None = None  # Cannon splash multiplier; None otherwise.
 
 
 @dataclass(frozen=True)
 class EnemySnapshot:
     """Read-only display contract for one active enemy."""
 
+    id: int  # Stable runtime ID used by command APIs such as set_tower_target().
     name: str  # Enemy type name.
     position: Position  # Small cell containing the continuous world position.
     hp: float  # Current health.
@@ -118,6 +127,11 @@ class EnemySnapshot:
     path_progress: float  # World distance traveled along the route.
     is_slowed: bool  # Whether a slow effect is currently active.
     world_position: WorldPosition  # Continuous position in small-cell units.
+    armor: int = 0  # Flat damage removed from each positive incoming hit.
+    attack_range: float = 0.0  # World-unit range for building attacks.
+    attack_damage: int = 0  # Damage per building attack.
+    path: tuple[WorldPosition, ...] = ()  # Current route points for preview.
+    breach_target_id: int | None = None  # Building this enemy plans to breach.
 
 
 @dataclass(frozen=True)
@@ -233,6 +247,9 @@ BUILDING_KIND_BY_TYPE: tuple[tuple[type[Building], str], ...] = (
 class GameState:
     """Mutable state and public operation entry point for one game run."""
 
+    # Fraction of build cost refunded by sell_building(); the core is never sold.
+    SELL_REFUND_RATIO: ClassVar[float] = 0.7
+
     grid_map: GridMap
     gold: int = 180  # Current spendable gold; build, intel, and settlement change it.
     debt: int = 0  # Debt from overdraft/overload; interest is charged at wave end.
@@ -282,6 +299,7 @@ class GameState:
         # not start until the player explicitly ends the day.
         self.wave_runner: WaveRunner | None = None
         self.next_building_id = 1
+        self.next_enemy_id = 1
         self.result_message = ""
         self.latest_power_report = PowerReport(0, 0, 0, 1.0)
         core = Core(self._next_id(), self.grid_map.core_position)
@@ -454,6 +472,16 @@ class GameState:
             cooldown_remaining=tower.cooldown_remaining if tower is not None else None,
             is_overloaded=tower.is_overloaded if tower is not None else False,
             repair_cost=building.repair_cost,
+            target_enemy_id=tower.target_enemy_id if tower is not None else None,
+            health_efficiency=building.health_efficiency,
+            effective_power_supply=building.effective_power_supply,
+            splash_radius=(
+                building.SPLASH_RADIUS if isinstance(building, CannonTower) else None
+            ),
+            splash_damage_ratio=(
+                building.SPLASH_DAMAGE_RATIO
+                if isinstance(building, CannonTower) else None
+            ),
         )
 
     def _building_kind(self, building: Building) -> str:
@@ -470,10 +498,12 @@ class GameState:
             if not enemy.is_alive:
                 continue
 
-            world_position = enemy.world_position_on_route(self.grid_map.path)
+            active_path = enemy.active_path(self.grid_map.path)
+            world_position = enemy.world_position_on_route(active_path)
             position = world_position.cell
             grouped.setdefault(position, []).append(
                 EnemySnapshot(
+                    id=enemy.id,
                     name=enemy.name,
                     position=position,
                     hp=enemy.hp,
@@ -484,6 +514,11 @@ class GameState:
                     path_progress=enemy.path_progress,
                     is_slowed=enemy.is_slowed,
                     world_position=world_position,
+                    armor=enemy.armor,
+                    attack_range=enemy.attack_range,
+                    attack_damage=enemy.attack_damage,
+                    path=active_path.points,
+                    breach_target_id=enemy.breach_target_id,
                 )
             )
 
@@ -525,6 +560,8 @@ class GameState:
                 raise ValueError(f"Position is not buildable: {cell}")
             if self.building_at(cell) is not None:
                 raise ValueError(f"Position is already occupied: {cell}")
+        if self._enemy_in_footprint(building):
+            raise ValueError("A living enemy occupies the building footprint.")
         if kind == "mine" and not all(self.grid_map.is_mine_site(cell) for cell in cells):
             raise ValueError("Mines must fit entirely within mine sites.")
         if kind != "mine" and any(self.grid_map.is_mine_site(cell) for cell in cells):
@@ -576,6 +613,7 @@ class GameState:
         self.gold -= building.cost
         self._add_building(building)
         self.recalculate_power()
+        self._replan_all_enemies()
         return building
 
     def repair_building(self, building_id: int) -> int:
@@ -605,16 +643,69 @@ class GameState:
         )
         if building is None:
             raise ValueError(f"Building not found: {building_id}")
+        if self._enemy_in_footprint(building):
+            raise ValueError("A living enemy occupies the building footprint.")
         cost = building.repair_cost
         if cost == 0:
             raise ValueError("Building is already at full health.")
         if self.gold < cost:
             raise ValueError(f"Not enough gold. Need {cost}, have {self.gold}.")
 
+        was_destroyed = building.is_destroyed
         self.gold -= cost
         building.repair()
         self.recalculate_power()
+        if was_destroyed:
+            self._replan_all_enemies()
         return cost
+
+    def sell_building(self, building_id: int) -> int:
+        """Sell any non-core building and refund part of its build cost.
+
+        The core cannot be sold. Selling removes the building immediately,
+        refunds ``round(cost * SELL_REFUND_RATIO)`` gold, and recalculates power
+        so downstream buildings may disconnect. Towers, mines, power plants,
+        and power nodes are all sellable. Overload markers and debt are left
+        unchanged. Unlike ``demolish_tower()``, this command refunds gold and
+        rejects an ended game.
+
+        Args:
+            building_id: Positive integer ID of an existing non-core building.
+                Booleans and non-integers are rejected.
+
+        Returns:
+            The gold refunded to the player.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, the ID is
+                not a positive integer, the building does not exist, or the
+                target is the core. Rejected calls leave all state unchanged.
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot sell after the game has ended.")
+        if (
+            isinstance(building_id, bool)
+            or not isinstance(building_id, int)
+            or building_id <= 0
+        ):
+            raise ValueError("Building ID must be a positive integer.")
+        building = next(
+            (building for building in self.buildings if building.id == building_id),
+            None,
+        )
+        if building is None:
+            raise ValueError(f"Building not found: {building_id}")
+        if isinstance(building, Core):
+            raise ValueError("The core cannot be sold.")
+
+        refund = round(building.cost * self.SELL_REFUND_RATIO)
+        self.buildings = [
+            building for building in self.buildings if building.id != building_id
+        ]
+        self.gold += refund
+        self.recalculate_power()
+        self._replan_all_enemies()
+        return refund
 
     def buy_wave_intel(self) -> str:
         """Spend 8 gold and return the current wave briefing.
@@ -716,6 +807,71 @@ class GameState:
         tower.needs_repair = True
         self.debt += 10
 
+    def set_tower_target(self, tower_id: int, enemy_id: int) -> None:
+        """Force one tower to attack a specific enemy before auto-selection.
+
+        The manual target is honored only while it stays alive and inside the
+        tower's range; otherwise the tower clears it and falls back to automatic
+        target selection on its next attack.
+
+        Args:
+            tower_id: Positive integer ID of an existing tower. Booleans are
+                rejected.
+            enemy_id: Positive integer ID of an existing living enemy. Booleans
+                are rejected.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, either ID is
+                not a positive integer, the tower does not exist, or the enemy
+                does not exist or is already dead. Rejected calls leave all
+                state unchanged.
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot set a target after the game has ended.")
+        if (
+            isinstance(tower_id, bool)
+            or not isinstance(tower_id, int)
+            or tower_id <= 0
+        ):
+            raise ValueError("Tower ID must be a positive integer.")
+        if (
+            isinstance(enemy_id, bool)
+            or not isinstance(enemy_id, int)
+            or enemy_id <= 0
+        ):
+            raise ValueError("Enemy ID must be a positive integer.")
+        tower = self.find_tower(tower_id)
+        enemy = next(
+            (enemy for enemy in self.enemies if enemy.id == enemy_id and enemy.is_alive),
+            None,
+        )
+        if enemy is None:
+            raise ValueError(f"Enemy not found: {enemy_id}")
+        tower.target_enemy_id = enemy_id
+
+    def clear_tower_target(self, tower_id: int) -> None:
+        """Remove a tower's manual target so it resumes automatic selection.
+
+        Args:
+            tower_id: Positive integer ID of an existing tower. Booleans are
+                rejected.
+
+        Raises:
+            ValueError: The game has ended, the core is destroyed, the ID is not
+                a positive integer, or the tower does not exist. Rejected calls
+                leave all state unchanged.
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot clear a target after the game has ended.")
+        if (
+            isinstance(tower_id, bool)
+            or not isinstance(tower_id, int)
+            or tower_id <= 0
+        ):
+            raise ValueError("Tower ID must be a positive integer.")
+        tower = self.find_tower(tower_id)
+        tower.target_enemy_id = None
+
     def start_next_wave(self) -> None:
         """End the current DAY and start the upcoming NIGHT.
 
@@ -812,7 +968,7 @@ class GameState:
 
         Order:
             Spawn due enemies first, recalculate power, run tower attacks,
-            advance enemies, and finally let saboteurs attack power nodes. This
+            advance enemies, and finally let saboteurs attack power buildings. This
             lets towers respond to newly spawned enemies while node attacks use
             the enemies' updated positions.
 
@@ -855,13 +1011,16 @@ class GameState:
         self.elapsed_seconds += delta
 
         if self.wave_runner is not None:
-            self.enemies.extend(self.wave_runner.step(delta))
+            for enemy in self.wave_runner.step(delta):
+                enemy.id = self._next_enemy_id()
+                self.enemies.append(enemy)
+                self._assign_enemy_path(enemy)
 
         self.recalculate_power()
         self._towers_attack(delta)
         self._advance_enemies(delta)
         if self.core_hp > 0:
-            self._enemies_attack_nodes(delta)
+            self._enemies_attack_power_buildings(delta)
             self.recalculate_power()
 
         if self.core_hp <= 0:
@@ -894,6 +1053,7 @@ class GameState:
         tower = self.find_tower(building_id)
         self.buildings = [building for building in self.buildings if building.id != building_id]
         self.recalculate_power()
+        self._replan_all_enemies()
         return tower
 
     def find_tower(self, building_id: int) -> Tower:
@@ -912,6 +1072,65 @@ class GameState:
         building_id = self.next_building_id
         self.next_building_id += 1
         return building_id
+
+    def _next_enemy_id(self) -> int:
+        """Allocate a monotonically increasing runtime enemy ID."""
+        enemy_id = self.next_enemy_id
+        self.next_enemy_id += 1
+        return enemy_id
+
+    def _active_enemy_path(self, enemy: Enemy) -> RoutePath:
+        """Return the enemy's assigned route or the shared prototype fallback."""
+        return enemy.active_path(self.grid_map.path)
+
+    def _enemy_world_position(self, enemy: Enemy) -> WorldPosition:
+        """Return the enemy's current continuous position on its active route."""
+        return enemy.world_position_on_route(self._active_enemy_path(enemy))
+
+    def _assign_enemy_path(self, enemy: Enemy) -> bool:
+        """Plan and assign one enemy's route from its current cell.
+
+        A failed plan leaves the enemy stationary with a single-point route.
+        Builders and repair commands reject footprints containing living
+        enemies, so a normal replan starts from a valid walkable cell.
+        """
+        current = enemy.world_position_on_route(self._active_enemy_path(enemy))
+        try:
+            plan = find_path(
+                self.grid_map,
+                self.buildings,
+                current.cell,
+                enemy_speed=enemy.speed,
+                breach_damage=enemy.breach_damage,
+            )
+        except ValueError:
+            plan = None
+
+        enemy.path_progress = 0.0
+        if plan is None:
+            enemy.route = RoutePath((current,))
+            enemy.breach_target_id = None
+            enemy.stalled = True
+            return False
+
+        enemy.route = plan.route
+        enemy.breach_target_id = plan.breach_target_id
+        enemy.stalled = False
+        return True
+
+    def _replan_all_enemies(self) -> None:
+        """Refresh every living enemy after a building or terrain change."""
+        for enemy in self.enemies:
+            if enemy.is_alive:
+                self._assign_enemy_path(enemy)
+
+    def _enemy_in_footprint(self, building: Building) -> bool:
+        """Return whether a living enemy currently occupies a building cell."""
+        return any(
+            enemy.is_alive
+            and building.occupies(self._enemy_world_position(enemy).cell)
+            for enemy in self.enemies
+        )
 
     def _towers_attack(self, seconds: float) -> None:
         """Tick tower timers, run available attacks, and settle kill rewards.
@@ -933,7 +1152,10 @@ class GameState:
             if target is None:
                 continue
 
-            target.take_damage(building.current_damage())
+            damage = building.current_damage()
+            target.take_damage(damage)
+            if isinstance(building, CannonTower):
+                self._apply_splash_damage(building, target, damage)
             if isinstance(building, SlowTower):
                 target.apply_slow(2.0)
 
@@ -943,8 +1165,31 @@ class GameState:
         self.gold += sum(enemy.reward for enemy in defeated)
         self.enemies = [enemy for enemy in self.enemies if enemy.is_alive]
 
+    def _apply_splash_damage(
+        self, tower: CannonTower, primary: Enemy, damage: float
+    ) -> None:
+        """Damage other living enemies around the cannon's primary target.
+
+        Splash is centered on the primary target's continuous route position
+        and is not clipped to the tower's attack range. The primary target is
+        excluded so it only receives its full direct hit, and armor is applied
+        by `Enemy.take_damage()` for every secondary target.
+        """
+        origin = self._enemy_world_position(primary)
+        splash_damage = damage * tower.SPLASH_DAMAGE_RATIO
+        for enemy in self.enemies:
+            if enemy is primary or not enemy.is_alive:
+                continue
+            if world_distance(self._enemy_world_position(enemy), origin) <= tower.SPLASH_RADIUS:
+                enemy.take_damage(splash_damage)
+
     def _select_target(self, tower: Tower) -> Enemy | None:
-        """Select the furthest-progressing living enemy within world-unit range.
+        """Select a target, preferring a valid manual target when set.
+
+        A manual target from ``set_tower_target()`` wins while it stays alive
+        and inside the tower's range. When it becomes invalid the tower clears
+        it and falls back to the furthest-progressing living enemy within range.
+        Ties in route progress prefer the enemy nearest to the tower center.
 
         Range starts at the building's geometric center and ends at the
         enemy's continuous centerline position. world_distance() is the single
@@ -952,20 +1197,86 @@ class GameState:
         path traversal. Dead enemies await reward cleanup but cannot absorb
         another tower's attack during this same simulation step.
         """
+        if tower.target_enemy_id is not None:
+            forced = next(
+                (
+                    enemy for enemy in self.enemies
+                    if enemy.id == tower.target_enemy_id
+                    and enemy.is_alive
+                    and world_distance(
+                        tower.center, self._enemy_world_position(enemy)
+                    ) <= tower.range
+                ),
+                None,
+            )
+            if forced is not None:
+                return forced
+            # Drop a stale manual target so the tower can resume auto targeting.
+            tower.target_enemy_id = None
+
         targets = [
             enemy for enemy in self.enemies
             if enemy.is_alive and world_distance(
-                tower.center, enemy.world_position_on_route(self.grid_map.path)
+                tower.center, self._enemy_world_position(enemy)
             ) <= tower.range
         ]
-        return max(targets, key=lambda enemy: enemy.path_progress, default=None)
+        if not targets:
+            return None
+
+        best_progress = max(enemy.path_progress for enemy in targets)
+        best_progress_targets = [
+            enemy for enemy in targets if enemy.path_progress == best_progress
+        ]
+        if len(best_progress_targets) == 1:
+            return best_progress_targets[0]
+        return min(
+            best_progress_targets,
+            key=lambda enemy: world_distance(
+                tower.center, self._enemy_world_position(enemy)
+            ),
+        )
+
+    def _find_breach_target(self, enemy: Enemy) -> Building | None:
+        """Resolve an enemy's planned breach target if it is still alive."""
+        if enemy.breach_target_id is None:
+            return None
+        return next(
+            (
+                building
+                for building in self.buildings
+                if building.id == enemy.breach_target_id
+                and not building.is_destroyed
+            ),
+            None,
+        )
+
+    def _in_breach_range(self, enemy: Enemy, building: Building) -> bool:
+        """Return whether the enemy is close enough to attack a blocker."""
+        return (
+            enemy.attack_range > 0
+            and world_distance(self._enemy_world_position(enemy), building.center)
+            <= enemy.attack_range
+        )
 
     def _advance_enemies(self, seconds: float) -> None:
-        """Advance enemies and convert route-end arrivals into core damage."""
+        """Move enemies toward the core or their planned breach target."""
         escaped: list[Enemy] = []
         for enemy in self.enemies:
+            if enemy.stalled:
+                continue
+
+            if enemy.breach_target_id is not None:
+                target = self._find_breach_target(enemy)
+                if target is None:
+                    self._assign_enemy_path(enemy)
+                    continue
+                if self._in_breach_range(enemy, target):
+                    continue
+                enemy.advance(seconds)
+                continue
+
             enemy.advance(seconds)
-            if enemy.has_reached_core(self.grid_map.path):
+            if enemy.has_reached_core(self._active_enemy_path(enemy)):
                 escaped.append(enemy)
 
         for enemy in escaped:
@@ -973,47 +1284,69 @@ class GameState:
 
         self.enemies = [enemy for enemy in self.enemies if enemy not in escaped]
 
-    def _enemies_attack_nodes(self, seconds: float) -> None:
-        """Let ready saboteurs damage the nearest living node in range.
+    def _enemies_attack_power_buildings(self, seconds: float) -> None:
+        """Resolve breach attacks and saboteur attacks on power buildings.
 
-        Saboteurs remain on the fixed route in this prototype. Their attack
-        range uses the same Manhattan distance policy as tower targeting, and
-        each saboteur can perform at most one node attack per simulation step.
-        Destroyed nodes remain on the map with zero HP but stop transmitting
-        power during the following recalculation.
+        Breach hits deal one point per `breach_cooldown_seconds`, keeping
+        building HP integral while preserving the configured damage-per-second
+        differences. Saboteurs that are currently breaching a blocker do not
+        also attack a power building in the same step. Destroying any building
+        triggers a path refresh for every living enemy.
         """
-        nodes = [
+        targets = [
             building
             for building in self.buildings
-            if isinstance(building, PowerNode) and not building.is_destroyed
+            if isinstance(building, (PowerPlant, PowerNode))
+            and not building.is_destroyed
         ]
         for enemy in self.enemies:
             enemy.tick_attack_cooldown(seconds)
+            enemy.tick_breach_cooldown(seconds)
 
-        if not nodes:
-            return
+        destroyed_any = False
+        breaching_ids: set[int] = set()
+        for enemy in self.enemies:
+            target = self._find_breach_target(enemy)
+            if target is None:
+                continue
+            breaching_ids.add(enemy.id)
+            if not enemy.can_breach or not self._in_breach_range(enemy, target):
+                continue
+            target.take_damage(1)
+            enemy.reset_breach_cooldown()
+            if target.is_destroyed:
+                destroyed_any = True
 
         for enemy in self.enemies:
+            if enemy.id in breaching_ids:
+                continue
             if not enemy.can_attack_buildings:
                 continue
 
-            enemy_position = enemy.world_position_on_route(self.grid_map.path)
-            target = min(
-                (
-                    node
-                    for node in nodes
-                    if world_distance(enemy_position, node.center) <= enemy.attack_range
-                ),
-                key=lambda node: world_distance(enemy_position, node.center),
-                default=None,
-            )
-            if target is None:
+            enemy_position = self._enemy_world_position(enemy)
+            in_range = [
+                building
+                for building in targets
+                if not building.is_destroyed
+                and world_distance(enemy_position, building.center) <= enemy.attack_range
+            ]
+            if not in_range:
                 continue
 
+            target = min(
+                in_range,
+                key=lambda building: (
+                    0 if isinstance(building, PowerPlant) else 1,
+                    world_distance(enemy_position, building.center),
+                ),
+            )
             target.take_damage(enemy.attack_damage)
             enemy.reset_attack_cooldown()
             if target.is_destroyed:
-                nodes.remove(target)
-                if not nodes:
-                    return
+                destroyed_any = True
+                if target in targets:
+                    targets.remove(target)
+
+        if destroyed_any:
+            self._replan_all_enemies()
 

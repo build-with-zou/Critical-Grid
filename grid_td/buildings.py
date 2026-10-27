@@ -10,6 +10,7 @@ layer. `GameState` owns lifecycle, build cost, damage, and debt side effects;
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import floor
 from typing import ClassVar
 
 from grid_td.position import Footprint, LEGACY_TILE_SIZE, Position, WorldPosition
@@ -19,8 +20,8 @@ from grid_td.position import Footprint, LEGACY_TILE_SIZE, Position, WorldPositio
 class Building:
     """Base state shared by all buildings.
 
-    `efficiency` is the shared work multiplier from the latest power-grid
-    calculation, normally between 0 and 1. It is not building durability.
+    `efficiency` is the final work multiplier from the latest power-grid
+    calculation after electrical and health-condition factors are combined.
     Except for `Core`, buildings are normally created by `GameState.build()`
     and updated by `PowerGrid` during waves.
     """
@@ -33,7 +34,7 @@ class Building:
     current_hp: int | None = None  # Mutable health; initialized from max_hp.
     power_supply: int = 0  # Power supply counted after grid connection.
     power_draw: int = 0  # Power demand counted after grid connection.
-    efficiency: float = 0.0  # Work multiplier calculated by PowerGrid.
+    efficiency: float = 0.0  # Final work multiplier from power and health.
     connected_to_grid: bool = False  # Whether the core can reach this building.
     needs_repair: bool = False  # Repair marker left by overload-style actions.
     footprint: Footprint = field(init=False)
@@ -43,6 +44,10 @@ class Building:
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
     TRANSMITS_POWER: ClassVar[bool] = False
     REPAIR_GOLD_PER_HP: ClassVar[int] = 1
+    # Health is divided into ten-percent bands. A building at 90% health or
+    # above keeps full condition efficiency; lower bands reduce it gradually.
+    FULL_HEALTH_EFFICIENCY_THRESHOLD: ClassVar[float] = 0.90
+    HEALTH_EFFICIENCY_BANDS: ClassVar[int] = 10
 
     def __post_init__(self) -> None:
         self.footprint = self.FOOTPRINT
@@ -103,6 +108,42 @@ class Building:
         if restored:
             self.current_hp = self.max_hp
         return restored
+
+    @property
+    def health_ratio(self) -> float:
+        """Return current health as a clamped ratio in the range 0..1."""
+        if self.max_hp <= 0:
+            return 0.0
+        return min(1.0, max(0.0, self.hp / self.max_hp))
+
+    @property
+    def health_efficiency(self) -> float:
+        """Return the condition multiplier applied before electrical efficiency.
+
+        The first 10% band (90% to 100% HP) is intentionally lossless. Below
+        that threshold each ten-percent band lowers condition efficiency by
+        0.1, while zero HP disables the building completely. Integer HP and
+        arbitrary max HP values are handled without assuming a fixed health
+        scale.
+        """
+        if self.hp <= 0:
+            return 0.0
+        if self.health_ratio >= self.FULL_HEALTH_EFFICIENCY_THRESHOLD:
+            return 1.0
+        # Below the lossless band, the interval [80%, 90%) maps to 0.9,
+        # [70%, 80%) maps to 0.8, and so on. The explicit +1 keeps an exact
+        # ten-percent boundary in the higher condition band.
+        band = floor(self.hp * self.HEALTH_EFFICIENCY_BANDS / self.max_hp) + 1
+        return min(1.0, band / self.HEALTH_EFFICIENCY_BANDS)
+
+    def effective_efficiency(self, electrical_efficiency: float) -> float:
+        """Combine power availability with condition efficiency."""
+        return max(0.0, electrical_efficiency) * self.health_efficiency
+
+    @property
+    def effective_power_supply(self) -> int:
+        """Return supply after condition effects; ordinary types are unchanged."""
+        return self.power_supply
 
     @property
     def is_power_source(self) -> bool:
@@ -183,6 +224,13 @@ class PowerPlant(Building):
             power_draw=0,
         )
 
+    @property
+    def effective_power_supply(self) -> int:
+        """Return health-scaled supply; a destroyed plant provides nothing."""
+        if self.is_destroyed:
+            return 0
+        return round(self.power_supply * self.health_efficiency)
+
 
 @dataclass
 class PowerNode(Building):
@@ -226,6 +274,7 @@ class Tower(Building):
     cooldown_seconds: float = 1.0  # Base attack interval at 100% speed.
     cooldown_remaining: float = 0.0  # Logical seconds until the next attack.
     overload_seconds_remaining: float = 0.0  # Logical seconds of overload left.
+    target_enemy_id: int | None = None  # Manual target ID; None uses auto selection.
 
     @property
     def is_overloaded(self) -> bool:
@@ -293,17 +342,15 @@ class GunTower(Tower):
 
 @dataclass
 class CannonTower(Tower):
-    """High-damage, slower-firing tower.
-
-    The current implementation still treats it as single-target damage; the
-    splash damage from the design document is not implemented here yet.
-    """
+    """High-damage, slower-firing tower with target-centered splash damage."""
 
     SYMBOL: ClassVar[str] = "A"  # Map character used by TextRenderer.
     FOOTPRINT: ClassVar[Footprint] = Footprint(3, 3)
+    SPLASH_RADIUS: ClassVar[float] = 3.0  # World units around the primary target.
+    SPLASH_DAMAGE_RATIO: ClassVar[float] = 0.5  # Secondary damage multiplier.
 
     def __init__(self, building_id: int, position: Position, high_ground: bool = False) -> None:
-        """Create a slow high-damage tower; currently still single-target."""
+        """Create a slow high-damage tower with target-centered splash."""
         super().__init__(
             id=building_id,
             name="Cannon Tower",

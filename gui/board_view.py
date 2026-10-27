@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pygame
 
-from grid_td.game_state import BuildPreview, BuildingSnapshot, GameSnapshot
+from grid_td.game_state import BuildPreview, BuildingSnapshot, EnemySnapshot, GameSnapshot
 from grid_td.position import Position, WorldPosition, world_distance
 from gui.styles import (
     ATTACK_RANGE_COLOR,
@@ -37,6 +39,23 @@ class BoardView:
         self.font = font
         self.small_font = pygame.font.SysFont("arial", 12, bold=True)
         self.legend_font = pygame.font.SysFont("arial", 14)
+        self.building_sprites = self._load_building_sprites()
+
+    @staticmethod
+    def _load_building_sprites() -> dict[str, pygame.Surface]:
+        """Cache selected art by snapshot kind; absent assets retain glyph rendering."""
+        assets = Path(__file__).resolve().parent / "assets" / "buildings"
+        selected = {
+            "core": "core-v2.png",
+            "mine": "mine-v1.png",
+            "gun_tower": "gun-tower-v2.png",
+        }
+        sprites: dict[str, pygame.Surface] = {}
+        for kind, filename in selected.items():
+            path = assets / filename
+            if path.is_file():
+                sprites[kind] = pygame.image.load(str(path)).convert_alpha()
+        return sprites
 
     def position_at(
         self, mouse_pos: tuple[int, int], snapshot: GameSnapshot
@@ -48,13 +67,43 @@ class BoardView:
             return Position(x, y)
         return None
 
+    def _enemy_markers(
+        self, snapshot: GameSnapshot
+    ) -> list[tuple[EnemySnapshot, tuple[int, int]]]:
+        """Share marker positions between drawing and picking continuous enemies."""
+        markers = []
+        for row in snapshot.board:
+            for cell in row:
+                for index, enemy in enumerate(cell.enemies):
+                    x, y = self._world_point(enemy.world_position, snapshot)
+                    if len(cell.enemies) > 1:
+                        slot = index % 4
+                        x += ((slot % 2) * 2 - 1) * 3
+                        y += ((slot // 2) * 2 - 1) * 3
+                    markers.append((enemy, (x, y)))
+        return markers
+
+    def enemy_at(
+        self, mouse_pos: tuple[int, int], snapshot: GameSnapshot
+    ) -> EnemySnapshot | None:
+        """Pick the nearest drawn marker, with stable IDs breaking exact overlaps."""
+        candidates = [
+            ((center[0] - mouse_pos[0]) ** 2 + (center[1] - mouse_pos[1]) ** 2, enemy.id, enemy)
+            for enemy, center in self._enemy_markers(snapshot)
+        ]
+        if not candidates:
+            return None
+        distance, _, enemy = min(candidates, key=lambda item: item[:2])
+        return enemy if distance <= 8 ** 2 else None
+
     def draw(
         self,
         snapshot: GameSnapshot,
-        selected_tower_id: int | None,
+        selected_building_id: int | None,
         inspected_position: Position | None,
         hover_position: Position | None,
         preview: BuildPreview | None,
+        selected_enemy_id: int | None = None,
     ) -> None:
         """Draw one coherent frame from a single immutable game snapshot."""
         board_rect = pygame.Rect(
@@ -81,13 +130,13 @@ class BoardView:
                     buildings[cell.building.id] = cell.building
 
         # Keep candidate coverage beneath units and the placement outline on top.
-        selected = buildings.get(selected_tower_id)
+        selected = buildings.get(selected_building_id)
         if preview is not None:
             self._draw_build_range(snapshot, preview)
         elif selected is not None and selected.range is not None:
             self._draw_range(snapshot, selected)
-        self._draw_enemies(snapshot)
-        self._draw_buildings(buildings, selected_tower_id)
+        self._draw_buildings(buildings, selected_building_id)
+        self._draw_enemies(snapshot, selected_enemy_id, selected.target_enemy_id if selected else None)
 
         if inspected_position is not None:
             cell = snapshot.board[inspected_position.y][inspected_position.x]
@@ -191,13 +240,20 @@ class BoardView:
                     pygame.draw.line(self.screen, color, start, end)
 
     def _draw_buildings(
-        self, buildings: dict[int, BuildingSnapshot], selected_tower_id: int | None
+        self, buildings: dict[int, BuildingSnapshot], selected_building_id: int | None
     ) -> None:
-        """Draw each building once despite its presence in several board cells."""
+        """Draw each footprint once, preserving art paths and overlaying live health."""
         for building in buildings.values():
             rect = self._building_rect(building)
-            color = SYMBOL_COLORS.get(building.symbol, (156, 174, 188))
-            pygame.draw.rect(self.screen, color, rect.inflate(-8, -8), border_radius=5)
+            sprite = self.building_sprites.get(building.kind)
+            if sprite is not None:
+                # A solid terrain backing keeps map lines out of transparent art.
+                backing = MINE_SITE if building.kind == "mine" else GROUND
+                pygame.draw.rect(self.screen, backing, rect)
+                self.screen.blit(sprite, sprite.get_rect(center=rect.center))
+            else:
+                color = SYMBOL_COLORS.get(building.symbol, (156, 174, 188))
+                pygame.draw.rect(self.screen, color, rect.inflate(-8, -8), border_radius=5)
             # Connectivity and available output are separate snapshot facts.
             if not building.connected_to_grid:
                 ring, status = UNCHARGED_COLOR, "OFF"
@@ -205,40 +261,62 @@ class BoardView:
                 ring, status = LIMITED_COLOR, "LOW"
             else:
                 ring, status = CHARGED_COLOR, ""
-            pygame.draw.rect(self.screen, ring, rect.inflate(-4, -4), 2, border_radius=6)
-            if building.id == selected_tower_id:
+            # Show warnings on all art, but keep normal sprites free of green rings.
+            if sprite is None or status:
+                pygame.draw.rect(
+                    self.screen, ring, rect.inflate(-4, -4), 2, border_radius=6
+                )
+            if building.id == selected_building_id:
                 pygame.draw.rect(
                     self.screen, (250, 226, 139), rect.inflate(-1, -1), 2,
                     border_radius=6,
                 )
-            symbol = self.font.render(building.symbol, True, BACKGROUND)
-            self.screen.blit(symbol, symbol.get_rect(center=rect.center))
+            if sprite is None:
+                symbol = self.font.render(building.symbol, True, BACKGROUND)
+                self.screen.blit(symbol, symbol.get_rect(center=rect.center))
             if status:
                 badge = self.small_font.render(status, True, ring)
                 self.screen.blit(badge, badge.get_rect(midbottom=(rect.centerx, rect.bottom - 4)))
             if building.needs_repair:
                 warning = self.small_font.render("!", True, UNCHARGED_COLOR)
                 self.screen.blit(warning, (rect.right - 13, rect.top + 2))
+            if building.hp < building.max_hp:
+                bar = pygame.Rect(rect.x + 5, rect.y + 2, rect.width - 10, 3)
+                pygame.draw.rect(self.screen, BACKGROUND, bar)
+                pygame.draw.rect(
+                    self.screen, UNCHARGED_COLOR,
+                    (bar.x, bar.y, round(bar.width * building.hp / building.max_hp), bar.height),
+                )
 
-    def _draw_enemies(self, snapshot: GameSnapshot) -> None:
-        """Draw current world positions; snapshots have no stable enemy IDs."""
+    def _draw_enemies(
+        self, snapshot: GameSnapshot, selected_enemy_id: int | None,
+        manual_target_id: int | None,
+    ) -> None:
+        """Draw stable-ID enemies with armor, slow, inspection, and manual-target cues."""
+        for enemy, center in self._enemy_markers(snapshot):
+            color = ENEMY_COLORS.get(enemy.name, ENEMY_COLOR)
+            pygame.draw.circle(self.screen, color, center, 5)
+            pygame.draw.circle(self.screen, BACKGROUND, center, 5, 1)
+            if enemy.is_slowed:
+                pygame.draw.circle(self.screen, (111, 214, 228), center, 7, 1)
+            if enemy.id == selected_enemy_id:
+                pygame.draw.circle(self.screen, (111, 214, 228), center, 10, 2)
+            if enemy.id == manual_target_id:
+                pygame.draw.circle(self.screen, (250, 226, 139), center, 12, 2)
+                label = self.small_font.render(f"TARGET #{enemy.id}", True, (250, 226, 139))
+                self.screen.blit(label, (center[0] + 13, center[1] - 7))
+            bar = pygame.Rect(center[0] - 5, center[1] - 9, 10, 2)
+            pygame.draw.rect(self.screen, BACKGROUND, bar)
+            pygame.draw.rect(
+                self.screen, CHARGED_COLOR,
+                (bar.x, bar.y, round(bar.width * enemy.hp / enemy.max_hp), bar.height),
+            )
+            if enemy.armor:
+                label = self.small_font.render(f"ARM {enemy.armor}", True, TEXT)
+                self.screen.blit(label, (center[0] - 14, center[1] + 8))
         for row in snapshot.board:
             for cell in row:
                 count = len(cell.enemies)
-                # Limit overlapping markers, then show the full count for crowded cells.
-                for index, enemy in enumerate(cell.enemies[:4]):
-                    x, y = self._world_point(enemy.world_position, snapshot)
-                    offset = ((index % 2) * 2 - 1, (index // 2) * 2 - 1)
-                    center = (x + offset[0] * 3, y + offset[1] * 3) if count > 1 else (x, y)
-                    color = ENEMY_COLORS.get(enemy.name, ENEMY_COLOR)
-                    pygame.draw.circle(self.screen, color, center, 5)
-                    pygame.draw.circle(self.screen, BACKGROUND, center, 5, 1)
-                    bar = pygame.Rect(center[0] - 5, center[1] - 9, 10, 2)
-                    pygame.draw.rect(self.screen, BACKGROUND, bar)
-                    pygame.draw.rect(
-                        self.screen, CHARGED_COLOR,
-                        (bar.x, bar.y, round(bar.width * enemy.hp / enemy.max_hp), bar.height),
-                    )
                 if count > 4:
                     label = self.small_font.render(str(count), True, TEXT)
                     self.screen.blit(label, self._cell_rect(cell.position).move(2, 1).topleft)

@@ -134,7 +134,6 @@ class CoreLoopTest(unittest.TestCase):
 
         invalid_cases = (
             ("blocked terrain", "gun_tower", Position(0, 0)),
-            ("enemy route", "gun_tower", Position(0, 12)),
             ("core position", "gun_tower", Position(30, 3)),
             ("mine outside mine site", "mine", Position(0, 3)),
             ("non-mine on mine site", "gun_tower", Position(6, 3)),
@@ -151,6 +150,13 @@ class CoreLoopTest(unittest.TestCase):
         with self.subTest(label="occupied position"):
             with self.assertRaises(ValueError):
                 game.build("gun_tower", occupied_position)
+
+    def test_building_on_road_is_allowed(self) -> None:
+        game = GameState(create_demo_map())
+
+        building = game.build("gun_tower", Position(0, 12))
+
+        self.assertEqual(building.name, "Gun Tower")
 
     def test_building_requires_enough_gold(self) -> None:
         """Build placement should fail cleanly when the player cannot pay."""

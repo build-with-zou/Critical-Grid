@@ -7,10 +7,12 @@ then connects each consumer to its nearest reachable transmitter. The returned
 `PowerReport` is read by the status line and tests.
 
 Only the core, power plants, and power nodes are transmitters. A powered mine
-or tower cannot relay coverage to another building. Efficiency is still a
-shared multiplier for all connected buildings, with no per-building priority
-allocation. Any connectivity-rule change can affect towers, mines, wave
-difficulty, and rendered state at the same time.
+or tower cannot relay coverage to another building. Power plants contribute
+health-scaled supply, while the core keeps its nominal base supply until the
+cell is destroyed. The reported efficiency is the shared electrical multiplier;
+each building's stored efficiency additionally includes its own health-condition
+multiplier. There is no per-building power priority allocation. Any connectivity-rule change can affect towers, mines,
+wave difficulty, and rendered state at the same time.
 """
 
 from __future__ import annotations
@@ -74,7 +76,8 @@ class PowerGrid:
             A `PowerReport` that counts only buildings connected from the core.
 
         Side effects:
-            Overwrites each building's `connected_to_grid` and `efficiency`.
+            Overwrites each building's `connected_to_grid` and final
+            `efficiency` (electrical efficiency multiplied by health condition).
             Disconnected buildings are explicitly set to 0 efficiency. Callers
             should run this before reading tower or mine behavior.
         """
@@ -84,13 +87,20 @@ class PowerGrid:
         # node's coverage radius.
         connected_indices = self._find_connected_indices(grid_map, buildings)
         connected_buildings = [buildings[index] for index in sorted(connected_indices)]
-        total_supply = sum(building.power_supply for building in connected_buildings)
+        # Power plants lose supply with condition; the core remains a stable
+        # base source until it is destroyed and the run ends.
+        total_supply = sum(
+            building.effective_power_supply for building in connected_buildings
+        )
         total_demand = sum(building.power_draw for building in connected_buildings)
         efficiency = self._calculate_efficiency(total_supply, total_demand)
 
         for index, building in enumerate(buildings):
             building.connected_to_grid = index in connected_indices
-            building.efficiency = efficiency if building.connected_to_grid else 0.0
+            building.efficiency = (
+                building.effective_efficiency(efficiency)
+                if building.connected_to_grid else 0.0
+            )
 
         return PowerReport(
             connected_count=len(connected_buildings),
