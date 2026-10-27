@@ -8,11 +8,10 @@ physical path, while snapshots expose both terrain and continuous positions
 for presentation layers.
 
 `GridMap` is a frozen data object, so these methods do not change the layout
-during a run. `is_walkable()` and `is_buildable_terrain()` expose the
-pathfinding-ready terrain capabilities, including optional walk-only and
-build-only cells. The older `is_buildable()` remains the current prototype
-build rule; occupancy, mine-site type, gold, and dynamic pathing constraints
-are validated by `GameState.build()`.
+during a run. `is_walkable()` and `is_buildable()` expose independent terrain
+capabilities, including optional walk-only and build-only cells. Occupancy,
+mine-site type, gold, and dynamic pathing constraints are validated by
+`GameState.build()`.
 """
 
 from __future__ import annotations
@@ -127,36 +126,18 @@ class GridMap:
             return False
         return position not in self.build_only_positions
 
-    def is_buildable_terrain(self, position: Position) -> bool:
+    def is_buildable(self, position: Position) -> bool:
         """Return whether static terrain permits constructing a building.
 
-        This is the pathfinding-ready build rule: roads are buildable and
-        walk-only cells are not. Mine-site and occupancy restrictions remain
-        the responsibility of `GameState.build()`.
+        Roads, high ground, mine sites and ordinary ground are buildable;
+        walk-only, illegal and core cells are not. Mine-site type and occupancy
+        restrictions remain the responsibility of `GameState.build()`.
         """
         if not self.in_bounds(position):
             return False
         if self.is_core(position) or self.is_illegal(position):
             return False
         return position not in self.walk_only_positions
-
-    def is_buildable(self, position: Position) -> bool:
-        """Return whether a coordinate satisfies static build constraints.
-
-        Returns:
-            Only indicates that the coordinate is in bounds, not on the route,
-            not on blocked terrain, and not the core. Occupancy and
-            building-type restrictions are handled by `GameState.build()`.
-        """
-        if not self.in_bounds(position):
-            return False
-        if self.is_route(position):
-            return False
-        if self.is_core(position):
-            return False
-        if self.is_illegal(position):
-            return False
-        return True
 
     def is_illegal(self, position: Position) -> bool:
         """Return whether the position is illegal to build."""

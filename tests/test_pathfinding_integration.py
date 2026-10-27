@@ -15,6 +15,8 @@ def make_map(
     core_position: Position,
     *,
     route: tuple[Position, ...] = (Position(0, 0),),
+    walk_only: frozenset[Position] = frozenset(),
+    build_only: frozenset[Position] = frozenset(),
 ) -> GridMap:
     """Build a minimal open-ground map for path integration tests."""
     return GridMap(
@@ -25,6 +27,8 @@ def make_map(
         mine_positions=frozenset(),
         high_ground_positions=frozenset(),
         illegal_ground_positions=frozenset(),
+        walk_only_positions=walk_only,
+        build_only_positions=build_only,
     )
 
 
@@ -111,6 +115,48 @@ class ReplanAndBreachTest(unittest.TestCase):
 
         self.assertEqual(enemy_snapshot.breach_target_id, enemy.breach_target_id)
         self.assertEqual(enemy_snapshot.path, enemy.route.points)
+
+
+class TerrainBuildRuleTest(unittest.TestCase):
+    def test_road_cells_are_buildable(self) -> None:
+        game = GameState(
+            make_map(12, 12, Position(9, 7), route=(Position(1, 0),)),
+            gold=1000,
+        )
+
+        building = game.build("gun_tower", Position(1, 0))
+
+        self.assertIsNotNone(building)
+        self.assertTrue(game.grid_map.is_buildable(Position(1, 0)))
+
+    def test_walk_only_cells_cannot_be_built_on(self) -> None:
+        game = GameState(
+            make_map(
+                12,
+                12,
+                Position(9, 7),
+                route=(Position(1, 0),),
+                walk_only=frozenset({Position(2, 0)}),
+            ),
+            gold=1000,
+        )
+
+        with self.assertRaisesRegex(ValueError, "not buildable"):
+            game.build("gun_tower", Position(1, 0))
+
+    def test_build_only_cells_can_be_built_on_but_not_walked(self) -> None:
+        grid_map = make_map(
+            12,
+            12,
+            Position(9, 7),
+            route=(Position(1, 0),),
+            build_only=frozenset({Position(1, 0)}),
+        )
+        game = GameState(grid_map, gold=1000)
+
+        self.assertFalse(grid_map.is_walkable(Position(1, 0)))
+        self.assertTrue(grid_map.is_buildable(Position(1, 0)))
+        game.build("gun_tower", Position(1, 0))
 
 
 class EnemyOccupancyTest(unittest.TestCase):

@@ -42,11 +42,13 @@ class TerrainCapabilityTest(unittest.TestCase):
         )
 
         self.assertTrue(grid_map.is_walkable(Position(1, 1)))
-        self.assertFalse(grid_map.is_buildable_terrain(Position(1, 1)))
+        self.assertFalse(grid_map.is_buildable(Position(1, 1)))
         self.assertFalse(grid_map.is_walkable(Position(2, 2)))
-        self.assertTrue(grid_map.is_buildable_terrain(Position(2, 2)))
+        self.assertTrue(grid_map.is_buildable(Position(2, 2)))
         self.assertTrue(grid_map.is_walkable(Position(3, 3)))
-        self.assertTrue(grid_map.is_buildable_terrain(Position(3, 3)))
+        self.assertTrue(grid_map.is_buildable(Position(3, 3)))
+        self.assertTrue(grid_map.is_walkable(Position(0, 0)))
+        self.assertTrue(grid_map.is_buildable(Position(0, 0)))
 
     def test_overlapping_capability_cells_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
