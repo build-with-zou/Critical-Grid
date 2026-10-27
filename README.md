@@ -40,7 +40,7 @@ relay power. Every building has mutable health, condition-based efficiency,
 and gold-funded repair. Saboteurs prioritize power plants over power nodes.
 Enemies now use per-enemy open-ground pathfinding with buildings as blockers
 and automatic breach attacks; other enemy building targets, saboteur route
-deviation, build-on-road rules, and GUI route previews are still pending.
+deviation, and GUI route previews are still pending.
 Treat the code as the behavioral source of truth when changing the prototype;
 use the design document for planned features and unresolved rules.
 
@@ -129,10 +129,11 @@ right and y pointing down. `Position` accepts integer small-cell coordinates;
   type's configuration does not resize existing entities. Rectangular and
   even-sized footprints are supported. A custom map's `core_footprint` defines
   both the reserved core terrain and the runtime core's size.
-- The whole footprint must fit inside the map and avoid roads, blocked cells,
-  the core, and other buildings. Mines must fit entirely inside mine terrain;
-  other buildings cannot overlap it. High-ground range bonuses require full
-  footprint coverage.
+- The whole footprint must fit inside the map and avoid blocked cells, the
+  core, and other buildings. Roads, high ground and ordinary ground are
+  buildable; walk-only cells are not. Mines must fit entirely inside mine
+  terrain, and other buildings cannot overlap it. High-ground range bonuses
+  require full footprint coverage.
 - Power propagates from the core, power plants, and power nodes to every
   building whose center is within an inclusive six-world-unit Manhattan radius
   of a connected transmitter. Ordinary buildings cannot relay power, so a
@@ -444,8 +445,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 - 36 by 21 small-cell map with configurable rectangular building footprints.
 - Per-enemy open-ground pathfinding with buildings as blockers, automatic
   breach attacks, and four enemy types including flat armor.
-- Buildable mines, power plants, power nodes, and three tower types, including
-  cannon splash damage.
+- Buildable mines, power plants, power nodes, and three tower types on open
+  ground, roads and high ground, including cannon splash damage.
 - Radius-based power-grid connection and shared efficiency.
 - Health-scaled power-plant supply and reduced building efficiency when power is
   insufficient or building health has dropped below its condition band.
@@ -466,8 +467,7 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 The current prototype is smaller than the full V0.2 design. The main remaining
 work is:
 
-- Complete pathfinding integration: build-on-road and terrain-capability
-  rules, route-aware construction validation, and GUI path previews.
+- Pathfinding finalization: GUI path previews and route-aware build previews.
 - Combat completion: enemy attacks on more building types, saboteur route
   deviation, and node transmission degradation.
 - Eight-night progression and balance.
