@@ -18,6 +18,7 @@ indices.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 from grid_td.path import RoutePath
 from grid_td.position import LEGACY_TILE_SIZE, Position, WorldPosition
@@ -41,6 +42,11 @@ class Enemy:
     attack_damage: int = 0  # Damage per building attack.
     attack_cooldown_seconds: float = 1.0  # Interval between building attacks.
     attack_cooldown_remaining: float = 0.0  # Time until the next building attack.
+    breach_damage: float = 0.0  # Damage per second against blocking buildings.
+    breach_cooldown_remaining: float = 0.0  # Time until the next breach hit.
+    route: RoutePath | None = None  # Per-enemy route assigned by GameState.
+    breach_target_id: int | None = None  # Building blocking the current route.
+    stalled: bool = False  # True when no path or breach plan is available.
 
     def __post_init__(self) -> None:
         """Validate flat armor and ensure enemies start at full health by default."""
@@ -50,6 +56,13 @@ class Enemy:
             or self.armor < 0
         ):
             raise ValueError("Armor must be a non-negative integer.")
+        if (
+            isinstance(self.breach_damage, bool)
+            or not isinstance(self.breach_damage, (int, float))
+            or not isfinite(self.breach_damage)
+            or self.breach_damage < 0
+        ):
+            raise ValueError("Breach damage must be a finite non-negative number.")
         if self.hp <= 0:
             self.hp = self.max_hp
 
@@ -82,6 +95,10 @@ class Enemy:
         """Apply slow, keeping the longer remaining duration on repeated hits."""
         self.slow_seconds_remaining = max(self.slow_seconds_remaining, seconds)
 
+    def active_path(self, fallback: RoutePath) -> RoutePath:
+        """Return the per-enemy route, or a shared fallback for test entities."""
+        return self.route if self.route is not None else fallback
+
     @property
     def can_attack_buildings(self) -> bool:
         """Return whether this enemy has a ready building attack."""
@@ -90,6 +107,30 @@ class Enemy:
             and self.attack_range > 0
             and self.attack_cooldown_remaining <= 0
         )
+
+    @property
+    def breach_cooldown_seconds(self) -> float:
+        """Return the interval for one point of breach damage."""
+        return 1.0 / self.breach_damage if self.breach_damage > 0 else 0.0
+
+    @property
+    def can_breach(self) -> bool:
+        """Return whether this enemy can damage a blocking building."""
+        return (
+            self.breach_damage > 0
+            and self.attack_range > 0
+            and self.breach_cooldown_remaining <= 0
+        )
+
+    def tick_breach_cooldown(self, seconds: float) -> None:
+        """Advance the breach cooldown without going below zero."""
+        self.breach_cooldown_remaining = max(
+            0.0, self.breach_cooldown_remaining - seconds
+        )
+
+    def reset_breach_cooldown(self) -> None:
+        """Start the next breach interval after a successful hit."""
+        self.breach_cooldown_remaining = self.breach_cooldown_seconds
 
     def tick_attack_cooldown(self, seconds: float) -> None:
         """Advance the building-attack cooldown without going below zero."""
@@ -138,8 +179,24 @@ def create_enemy(kind: str) -> Enemy:
         ValueError: Unknown enemy type.
     """
     templates = {
-        "basic": Enemy("Basic", max_hp=10, speed=0.75 * LEGACY_TILE_SIZE, damage_to_core=1, reward=4),
-        "fast": Enemy("Fast", max_hp=7, speed=1.25 * LEGACY_TILE_SIZE, damage_to_core=1, reward=5),
+        "basic": Enemy(
+            "Basic",
+            max_hp=10,
+            speed=0.75 * LEGACY_TILE_SIZE,
+            damage_to_core=1,
+            reward=4,
+            attack_range=3.0,
+            breach_damage=1.0,
+        ),
+        "fast": Enemy(
+            "Fast",
+            max_hp=7,
+            speed=1.25 * LEGACY_TILE_SIZE,
+            damage_to_core=1,
+            reward=5,
+            attack_range=3.0,
+            breach_damage=0.75,
+        ),
         "armored": Enemy(
             "Armored",
             max_hp=24,
@@ -147,6 +204,8 @@ def create_enemy(kind: str) -> Enemy:
             damage_to_core=2,
             reward=8,
             armor=2,
+            attack_range=3.0,
+            breach_damage=0.5,
         ),
         "saboteur": Enemy(
             "Saboteur",
@@ -157,6 +216,7 @@ def create_enemy(kind: str) -> Enemy:
             attack_range=6.0,
             attack_damage=1,
             attack_cooldown_seconds=1.0,
+            breach_damage=2.0,
         ),
     }
 
@@ -175,5 +235,6 @@ def create_enemy(kind: str) -> Enemy:
         attack_range=template.attack_range,
         attack_damage=template.attack_damage,
         attack_cooldown_seconds=template.attack_cooldown_seconds,
+        breach_damage=template.breach_damage,
     )
 
