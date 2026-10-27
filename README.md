@@ -374,7 +374,8 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 │   ├── __init__.py         # Package entry
 │   ├── position.py         # Cells, world positions, footprints and distance policy
 │   ├── path.py             # Distance-based fixed-route sampling
-│   ├── map.py              # Grid map, route, mine sites, buildable areas
+│   ├── pathing.py          # Experimental open-ground and breach pathfinding
+│   ├── map.py              # Grid map, route, mine sites, terrain capabilities
 │   ├── buildings.py        # Buildings and tower classes
 │   ├── enemies.py          # Enemy classes and enemy templates
 │   ├── power_grid.py       # Power-grid connection and efficiency calculation
