@@ -95,7 +95,7 @@ class BuildingSnapshot:
     power_supply: int  # Power provided when connected.
     power_draw: int  # Power consumed when connected.
     connected_to_grid: bool  # Whether the latest power pass reached it.
-    efficiency: float  # Final work multiplier after power and condition scaling.
+    efficiency: float  # Final work multiplier after power, health and transmission.
     needs_repair: bool  # Whether wave settlement should charge repair cost.
     width: int
     height: int
@@ -107,6 +107,7 @@ class BuildingSnapshot:
     repair_cost: int = 0  # Gold for a full HP repair; excludes overload service fees.
     target_enemy_id: int | None = None  # Manual target enemy ID; None for auto.
     health_efficiency: float = 1.0  # Condition multiplier before power efficiency.
+    transmission_efficiency: float = 1.0  # Best node-chain transmission quality.
     effective_power_supply: int = 0  # Health-scaled supply for connected power plants.
     splash_radius: float | None = None  # Cannon splash radius; None for other towers.
     splash_damage_ratio: float | None = None  # Cannon splash multiplier; None otherwise.
@@ -474,6 +475,7 @@ class GameState:
             repair_cost=building.repair_cost,
             target_enemy_id=tower.target_enemy_id if tower is not None else None,
             health_efficiency=building.health_efficiency,
+            transmission_efficiency=building.transmission_efficiency,
             effective_power_supply=building.effective_power_supply,
             splash_radius=(
                 building.SPLASH_RADIUS if isinstance(building, CannonTower) else None
