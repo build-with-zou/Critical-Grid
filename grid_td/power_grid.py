@@ -10,9 +10,11 @@ Only the core, power plants, and power nodes are transmitters. A powered mine
 or tower cannot relay coverage to another building. Power plants contribute
 health-scaled supply, while the core keeps its nominal base supply until the
 cell is destroyed. The reported efficiency is the shared electrical multiplier;
-each building's stored efficiency additionally includes its own health-condition
-multiplier. There is no per-building power priority allocation. Any connectivity-rule change can affect towers, mines,
-wave difficulty, and rendered state at the same time.
+each building's stored efficiency also includes its own health-condition and
+best-path transmission quality. Only power nodes attenuate transmission; core
+and plant sources have quality 1.0. There is no per-building power priority
+allocation. Any connectivity-rule change can affect towers, mines, wave
+difficulty, and rendered state at the same time.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 
-from grid_td.buildings import Building, Core
+from grid_td.buildings import Building, Core, PowerNode, PowerPlant
 from grid_td.map import GridMap
 from grid_td.position import world_distance
 
@@ -76,10 +78,12 @@ class PowerGrid:
             A `PowerReport` that counts only buildings connected from the core.
 
         Side effects:
-            Overwrites each building's `connected_to_grid` and final
-            `efficiency` (electrical efficiency multiplied by health condition).
-            Disconnected buildings are explicitly set to 0 efficiency. Callers
-            should run this before reading tower or mine behavior.
+            Overwrites each building's `connected_to_grid`,
+            `transmission_efficiency`, and final `efficiency` (electrical
+            efficiency multiplied by health condition and transmission quality).
+            Disconnected buildings are explicitly set to 0 efficiency and 0
+            transmission quality. Callers should run this before reading tower
+            or mine behavior.
         """
         # Connectivity is intentionally based on building centers and counts
         # each entity once.  Occupied-cell contact is no longer a requirement:
@@ -94,11 +98,14 @@ class PowerGrid:
         )
         total_demand = sum(building.power_draw for building in connected_buildings)
         efficiency = self._calculate_efficiency(total_supply, total_demand)
+        transmission = self._calculate_transmission_qualities(buildings, connected_indices)
 
         for index, building in enumerate(buildings):
             building.connected_to_grid = index in connected_indices
+            quality = transmission.get(index, 0.0) if building.connected_to_grid else 0.0
+            building.transmission_efficiency = quality
             building.efficiency = (
-                building.effective_efficiency(efficiency)
+                building.effective_efficiency(efficiency, quality)
                 if building.connected_to_grid else 0.0
             )
 
@@ -170,6 +177,72 @@ class PowerGrid:
             if nearest <= self.connection_radius:
                 connected.add(index)
         return connected
+
+    def _calculate_transmission_qualities(
+        self,
+        buildings: list[Building],
+        connected_indices: set[int],
+    ) -> dict[int, float]:
+        """Return the best transmission quality for every connected building.
+
+        Core and power-plant sources have quality 1. A power node multiplies
+        the best upstream quality by its own health efficiency, so chained
+        damaged nodes compound. Consumers use the best quality among the
+        transmitters covering them, independent of distance. This is a
+        deterministic attenuation model; damaged nodes keep their full radius.
+        """
+        transmitters = [
+            index
+            for index in connected_indices
+            if buildings[index].TRANSMITS_POWER
+            and not buildings[index].is_destroyed
+        ]
+        qualities: dict[int, float] = {}
+        for index in transmitters:
+            building = buildings[index]
+            if isinstance(building, (Core, PowerPlant)):
+                qualities[index] = 1.0
+
+        nodes = [
+            index for index in transmitters if isinstance(buildings[index], PowerNode)
+        ]
+        changed = True
+        while changed:
+            changed = False
+            for index in nodes:
+                node = buildings[index]
+                best = max(
+                    (
+                        quality * node.health_efficiency
+                        for source_index, quality in qualities.items()
+                        if source_index != index
+                        and source_index in transmitters
+                        and world_distance(node.center, buildings[source_index].center)
+                        <= self.connection_radius
+                    ),
+                    default=0.0,
+                )
+                if best > qualities.get(index, 0.0):
+                    qualities[index] = best
+                    changed = True
+
+        for index in connected_indices:
+            building = buildings[index]
+            if index in transmitters:
+                continue
+            best = max(
+                (
+                    qualities[source_index]
+                    for source_index in transmitters
+                    if source_index in qualities
+                    and world_distance(building.center, buildings[source_index].center)
+                    <= self.connection_radius
+                ),
+                default=1.0,
+            )
+            qualities[index] = best
+
+        return qualities
 
     def _calculate_efficiency(self, total_supply: int, total_demand: int) -> float:
         """Calculate the shared whole-grid efficiency from supply and demand.

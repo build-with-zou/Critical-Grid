@@ -21,9 +21,9 @@ class Building:
     """Base state shared by all buildings.
 
     `efficiency` is the final work multiplier from the latest power-grid
-    calculation after electrical and health-condition factors are combined.
-    Except for `Core`, buildings are normally created by `GameState.build()`
-    and updated by `PowerGrid` during waves.
+    calculation after electrical, health-condition and transmission factors are
+    combined. Except for `Core`, buildings are normally created by
+    `GameState.build()` and updated by `PowerGrid` during waves.
     """
 
     id: int  # Monotonically assigned by GameState for lookup and identity.
@@ -34,7 +34,8 @@ class Building:
     current_hp: int | None = None  # Mutable health; initialized from max_hp.
     power_supply: int = 0  # Power supply counted after grid connection.
     power_draw: int = 0  # Power demand counted after grid connection.
-    efficiency: float = 0.0  # Final work multiplier from power and health.
+    efficiency: float = 0.0  # Final work multiplier from power, health and transmission.
+    transmission_efficiency: float = 1.0  # Node-chain transmission quality.
     connected_to_grid: bool = False  # Whether the core can reach this building.
     needs_repair: bool = False  # Repair marker left by overload-style actions.
     footprint: Footprint = field(init=False)
@@ -136,9 +137,15 @@ class Building:
         band = floor(self.hp * self.HEALTH_EFFICIENCY_BANDS / self.max_hp) + 1
         return min(1.0, band / self.HEALTH_EFFICIENCY_BANDS)
 
-    def effective_efficiency(self, electrical_efficiency: float) -> float:
-        """Combine power availability with condition efficiency."""
-        return max(0.0, electrical_efficiency) * self.health_efficiency
+    def effective_efficiency(
+        self, electrical_efficiency: float, transmission_efficiency: float = 1.0
+    ) -> float:
+        """Combine power availability, condition and transmission quality."""
+        return (
+            max(0.0, electrical_efficiency)
+            * self.health_efficiency
+            * max(0.0, transmission_efficiency)
+        )
 
     @property
     def effective_power_supply(self) -> int:
