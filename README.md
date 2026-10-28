@@ -37,10 +37,11 @@ The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
 power nodes using a six-world-unit coverage radius; ordinary buildings do not
 relay power. Every building has mutable health, condition-based efficiency,
-and gold-funded repair. Saboteurs prioritize power plants over power nodes.
-Enemies now use per-enemy open-ground pathfinding with buildings as blockers
-and automatic breach attacks; other enemy building targets, saboteur route
-deviation, and GUI route previews are still pending.
+and gold-funded repair. Saboteurs now seek power plants first, then nodes, and
+switch to higher-priority facilities that enter attack range. Enemies use
+per-enemy open-ground pathfinding with buildings as blockers and automatic
+breach attacks; other enemy building targets and GUI route previews are still
+pending.
 Treat the code as the behavioral source of truth when changing the prototype;
 use the design document for planned features and unresolved rules.
 
@@ -203,8 +204,9 @@ contract:
   Do not use `route[int(path_progress)]` or reconstruct positions from waypoint
   indices. `EnemySnapshot.armor`, `attack_range`, and `attack_damage` expose
   combat details for inspection. `EnemySnapshot.path` contains the current
-  per-enemy route, and `EnemySnapshot.breach_target_id` names the building the
-  enemy plans to break, if any.
+  per-enemy route, `EnemySnapshot.breach_target_id` names the building the
+  enemy plans to break, and `EnemySnapshot.target_building_id` names the
+  infrastructure target of a saboteur.
 - `BuildingSnapshot` also exposes `repair_cost`, `health_efficiency`,
   `effective_power_supply`, `splash_radius`, `splash_damage_ratio`, and
   `target_enemy_id` for repair quotes, condition output, combat previews, and
@@ -350,11 +352,13 @@ that construct these snapshots by hand must provide `EnemySnapshot.id`.
   the first building on the breach path. All enemy types can breach with
   type-specific `breach_damage`; destroyed buildings become passable rubble and
   repairing them re-blocks the path.
-- Saboteurs attack power plants and power nodes while following their own path.
-  Within attack range, a power plant takes priority over a node; the nearest
-  target wins within the same priority. Destroying a plant removes its supply,
-  and destroying a node disconnects downstream coverage on the next power
-  recalculation.
+- Saboteurs actively seek power plants first, then nodes. They path to a
+  position within attack range, stop, and attack the target. A higher-priority
+  facility entering attack range preempts the current target; same-priority
+  targets are not thrashed. When a target is destroyed, the saboteur reselects
+  the next grid facility and eventually continues to the core. Destroying a
+  plant removes its supply, and destroying a node disconnects downstream
+  coverage on the next power recalculation.
 - Damaged power nodes keep full coverage radius but attenuate downstream
   transmission by `health_efficiency`. Chained nodes multiply along the best
   path; core and power-plant sources stay at quality `1.0`.
@@ -456,7 +460,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 - Radius-based power-grid connection and shared efficiency.
 - Health-scaled power-plant supply, condition-based building efficiency, and
   node-chain transmission attenuation for damaged power nodes.
-- Saboteurs attacking power plants and nodes with plant priority.
+- Saboteurs actively seeking power plants and nodes, with opportunistic
+  in-range target switching.
 - DAY/NIGHT lifecycle with explicit Start Night and wave settlement.
 - Wave spawning, mine income, debt interest, kill rewards, and overload fees.
 - Core overdraft, tower overload, wave intel, building repair, and selling.
@@ -474,8 +479,7 @@ The current prototype is smaller than the full V0.2 design. The main remaining
 work is:
 
 - Pathfinding finalization: GUI path previews and route-aware build previews.
-- Combat completion: enemy attacks on more building types and saboteur route
-  deviation.
+- Combat completion: enemy attacks on more building types.
 - Eight-night progression and balance.
 - Per-building power priority and richer wave intel.
 - GUI visualization for attack events, power-source topology, and route

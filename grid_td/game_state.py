@@ -13,7 +13,7 @@ Key state-flow boundaries:
 * New games start in DAY with no active wave runner.
 * `start_next_wave()` ends planning and creates a fresh NIGHT runner.
 * During NIGHT, `step()` spawns enemies, recalculates power, runs tower
-  attacks, moves enemies, then lets saboteurs attack power buildings. During DAY
+  attacks, moves enemies, then lets saboteurs attack their power-building targets. During DAY
   it leaves simulation time frozen.
 * `end_wave()` settles income, interest, and repairs, then enters the next
   DAY or records VICTORY. Core destruction records DEFEAT immediately.
@@ -46,7 +46,7 @@ from grid_td.buildings import (
 from grid_td.enemies import Enemy
 from grid_td.map import GridMap
 from grid_td.path import RoutePath
-from grid_td.pathing import find_path
+from grid_td.pathing import cells_within_range, find_path
 from grid_td.position import DISTANCE_METRIC, Position, WorldPosition, world_distance
 from grid_td.power_grid import PowerGrid, PowerReport
 from grid_td.waves import WaveRunner, create_demo_waves
@@ -133,6 +133,7 @@ class EnemySnapshot:
     attack_damage: int = 0  # Damage per building attack.
     path: tuple[WorldPosition, ...] = ()  # Current route points for preview.
     breach_target_id: int | None = None  # Building this enemy plans to breach.
+    target_building_id: int | None = None  # Infrastructure target for saboteurs.
 
 
 @dataclass(frozen=True)
@@ -521,6 +522,7 @@ class GameState:
                     attack_damage=enemy.attack_damage,
                     path=active_path.points,
                     breach_target_id=enemy.breach_target_id,
+                    target_building_id=enemy.target_building_id,
                 )
             )
 
@@ -970,7 +972,7 @@ class GameState:
 
         Order:
             Spawn due enemies first, recalculate power, run tower attacks,
-            advance enemies, and finally let saboteurs attack power buildings. This
+            advance enemies, and finally let saboteurs attack their power-building targets. This
             lets towers respond to newly spawned enemies while node attacks use
             the enemies' updated positions.
 
@@ -1020,6 +1022,7 @@ class GameState:
 
         self.recalculate_power()
         self._towers_attack(delta)
+        self._refresh_saboteur_targets()
         self._advance_enemies(delta)
         if self.core_hp > 0:
             self._enemies_attack_power_buildings(delta)
@@ -1089,26 +1092,98 @@ class GameState:
         """Return the enemy's current continuous position on its active route."""
         return enemy.world_position_on_route(self._active_enemy_path(enemy))
 
-    def _assign_enemy_path(self, enemy: Enemy) -> bool:
-        """Plan and assign one enemy's route from its current cell.
+    def _alive_power_buildings(self) -> list[Building]:
+        """Return living power plants and nodes for saboteur targeting."""
+        return [
+            building
+            for building in self.buildings
+            if isinstance(building, (PowerPlant, PowerNode))
+            and not building.is_destroyed
+        ]
 
-        A failed plan leaves the enemy stationary with a single-point route.
-        Builders and repair commands reject footprints containing living
-        enemies, so a normal replan starts from a valid walkable cell.
-        """
-        current = enemy.world_position_on_route(self._active_enemy_path(enemy))
+    def _find_target_building(self, enemy: Enemy) -> Building | None:
+        """Resolve an enemy's infrastructure target if it is still alive."""
+        if enemy.target_building_id is None:
+            return None
+        return next(
+            (
+                building
+                for building in self.buildings
+                if building.id == enemy.target_building_id
+                and not building.is_destroyed
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _power_priority(building: Building) -> int:
+        """Rank plants before nodes for saboteur target selection."""
+        return 0 if isinstance(building, PowerPlant) else 1
+
+    def _plan_to_building(self, enemy: Enemy, current: WorldPosition, target: Building):
+        """Plan to a walkable cell within the enemy's attack range of target."""
+        goals = cells_within_range(self.grid_map, target.center, enemy.attack_range)
+        if not goals:
+            return None
         try:
-            plan = find_path(
+            return find_path(
                 self.grid_map,
                 self.buildings,
                 current.cell,
                 enemy_speed=enemy.speed,
                 breach_damage=enemy.breach_damage,
+                goal_cells=goals,
             )
         except ValueError:
-            plan = None
+            return None
+
+    def _plan_saboteur_target(self, enemy: Enemy, current: WorldPosition):
+        """Choose the nearest reachable plant, then node, for a saboteur."""
+        power_buildings = self._alive_power_buildings()
+        for target_type in (PowerPlant, PowerNode):
+            best = None
+            for target in power_buildings:
+                if not isinstance(target, target_type):
+                    continue
+                plan = self._plan_to_building(enemy, current, target)
+                if plan is None:
+                    continue
+                if best is None or plan.time_seconds < best[1].time_seconds:
+                    best = (target, plan)
+            if best is not None:
+                return best
+        return None, None
+
+    def _assign_enemy_path(self, enemy: Enemy) -> bool:
+        """Plan and assign one enemy's route from its current cell.
+
+        Saboteurs choose a reachable power plant, then node, before falling
+        back to the core. A failed plan leaves the enemy stationary with a
+        single-point route. Builders and repair commands reject footprints
+        containing living enemies, so normal replans start from valid cells.
+        """
+        current = enemy.world_position_on_route(self._active_enemy_path(enemy))
+        plan = None
+        target_id = None
+        if enemy.targets_power_buildings:
+            target, plan = self._plan_saboteur_target(enemy, current)
+            if target is not None:
+                target_id = target.id
+
+        if plan is None:
+            try:
+                plan = find_path(
+                    self.grid_map,
+                    self.buildings,
+                    current.cell,
+                    enemy_speed=enemy.speed,
+                    breach_damage=enemy.breach_damage,
+                )
+            except ValueError:
+                plan = None
 
         enemy.path_progress = 0.0
+        enemy.target_building_id = target_id
         if plan is None:
             enemy.route = RoutePath((current,))
             enemy.breach_target_id = None
@@ -1119,6 +1194,51 @@ class GameState:
         enemy.breach_target_id = plan.breach_target_id
         enemy.stalled = False
         return True
+
+    def _refresh_saboteur_targets(self) -> None:
+        """Opportunistically switch saboteurs to higher-priority in-range targets.
+
+        A higher-priority facility (plant over node) preempts an in-range
+        target. If the current target is out of range, any in-range facility
+        is preferred. Same-priority in-range targets are kept to avoid
+        target oscillation.
+        """
+        alive = self._alive_power_buildings()
+        if not alive:
+            return
+        for enemy in self.enemies:
+            if not enemy.is_alive or not enemy.targets_power_buildings:
+                continue
+            position = self._enemy_world_position(enemy)
+            in_range = [
+                building
+                for building in alive
+                if world_distance(position, building.center) <= enemy.attack_range
+            ]
+            if not in_range:
+                continue
+
+            best = min(
+                in_range,
+                key=lambda building: (
+                    self._power_priority(building),
+                    world_distance(position, building.center),
+                    building.id,
+                ),
+            )
+            current = self._find_target_building(enemy)
+            if current is not None and self._in_breach_range(enemy, current):
+                if self._power_priority(best) >= self._power_priority(current):
+                    continue
+
+            if current is not None and current.id == best.id:
+                continue
+
+            enemy.target_building_id = best.id
+            enemy.breach_target_id = None
+            enemy.route = RoutePath((position,))
+            enemy.path_progress = 0.0
+            enemy.stalled = False
 
     def _replan_all_enemies(self) -> None:
         """Refresh every living enemy after a building or terrain change."""
@@ -1261,7 +1381,7 @@ class GameState:
         )
 
     def _advance_enemies(self, seconds: float) -> None:
-        """Move enemies toward the core or their planned breach target."""
+        """Move enemies toward the core, a breach target, or infrastructure."""
         escaped: list[Enemy] = []
         for enemy in self.enemies:
             if enemy.stalled:
@@ -1269,6 +1389,16 @@ class GameState:
 
             if enemy.breach_target_id is not None:
                 target = self._find_breach_target(enemy)
+                if target is None:
+                    self._assign_enemy_path(enemy)
+                    continue
+                if self._in_breach_range(enemy, target):
+                    continue
+                enemy.advance(seconds)
+                continue
+
+            if enemy.target_building_id is not None:
+                target = self._find_target_building(enemy)
                 if target is None:
                     self._assign_enemy_path(enemy)
                     continue
@@ -1319,8 +1449,25 @@ class GameState:
             if target.is_destroyed:
                 destroyed_any = True
 
+        targeted_ids: set[int] = set()
         for enemy in self.enemies:
-            if enemy.id in breaching_ids:
+            if enemy.id in breaching_ids or enemy.target_building_id is None:
+                continue
+            target = self._find_target_building(enemy)
+            if target is None:
+                continue
+            if not enemy.can_attack_buildings or not self._in_breach_range(enemy, target):
+                continue
+            target.take_damage(enemy.attack_damage)
+            enemy.reset_attack_cooldown()
+            targeted_ids.add(enemy.id)
+            if target.is_destroyed:
+                destroyed_any = True
+                if target in targets:
+                    targets.remove(target)
+
+        for enemy in self.enemies:
+            if enemy.id in breaching_ids or enemy.id in targeted_ids:
                 continue
             if not enemy.can_attack_buildings:
                 continue
