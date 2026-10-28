@@ -275,17 +275,22 @@ if building is not None:
   changes.
 - `PowerReport.efficiency` remains the shared electrical efficiency. Each
   building's `Building.efficiency` is `PowerReport.efficiency ×
-  Building.health_efficiency`, and mines/towers use this final value.
+  Building.health_efficiency × Building.transmission_efficiency`, and
+  mines/towers use this final value.
 - The condition multiplier affects consumer work (mine income, tower damage,
   and tower attack speed) and power-plant supply. A damaged plant supplies
   `round(nominal supply × health_efficiency)`. The core keeps its nominal
-  supply until it is destroyed, and power nodes still transmit at full range
-  until destroyed; node transmission degradation remains a later rule.
-- `BuildingSnapshot` adds optional `repair_cost` and `health_efficiency` fields
-  (defaults `0` and `1.0` for
-  manually constructed snapshots). Runtime snapshots always quote the full
-  HP repair cost, even when the command is unavailable due to game state or
-  insufficient gold. Existing `hp` and `max_hp` fields show actual health.
+  supply until it is destroyed.
+- Power nodes keep their full coverage radius while alive, but an intact node
+  multiplies the best upstream transmission quality by its own
+  `health_efficiency`. Downstream buildings choose the highest-quality covering
+  path, so damaged nodes attenuate consumers without immediately disconnecting
+  them. Core and power-plant sources keep quality `1.0`.
+- `BuildingSnapshot` adds optional `repair_cost`, `health_efficiency`, and
+  `transmission_efficiency` fields (defaults `0`, `1.0`, and `1.0` for manually
+  constructed snapshots). Runtime snapshots always quote the full HP repair
+  cost, even when the command is unavailable due to game state or insufficient
+  gold. Existing `hp` and `max_hp` fields show actual health.
 - Core health now lives on the `Core` entity. `GameState(..., core_hp=30)` and
   existing `core_hp` reads/assignments remain supported as a property over that
   same value. Custom starting HP above 30 raises the core's maximum to that
@@ -350,8 +355,9 @@ that construct these snapshots by hand must provide `EnemySnapshot.id`.
   target wins within the same priority. Destroying a plant removes its supply,
   and destroying a node disconnects downstream coverage on the next power
   recalculation.
-- Power-node transmission remains full while the node is alive; health-based
-  transmission degradation is still pending.
+- Damaged power nodes keep full coverage radius but attenuate downstream
+  transmission by `health_efficiency`. Chained nodes multiply along the best
+  path; core and power-plant sources stay at quality `1.0`.
 - Deterministic strength baselines live in
   `tests/test_combat_strength.py` (single tower vs enemy) and
   `tests/test_combat_group_strength.py` (cannon splash vs a small group).
@@ -448,8 +454,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 - Buildable mines, power plants, power nodes, and three tower types on open
   ground, roads and high ground, including cannon splash damage.
 - Radius-based power-grid connection and shared efficiency.
-- Health-scaled power-plant supply and reduced building efficiency when power is
-  insufficient or building health has dropped below its condition band.
+- Health-scaled power-plant supply, condition-based building efficiency, and
+  node-chain transmission attenuation for damaged power nodes.
 - Saboteurs attacking power plants and nodes with plant priority.
 - DAY/NIGHT lifecycle with explicit Start Night and wave settlement.
 - Wave spawning, mine income, debt interest, kill rewards, and overload fees.
@@ -468,8 +474,8 @@ The current prototype is smaller than the full V0.2 design. The main remaining
 work is:
 
 - Pathfinding finalization: GUI path previews and route-aware build previews.
-- Combat completion: enemy attacks on more building types, saboteur route
-  deviation, and node transmission degradation.
+- Combat completion: enemy attacks on more building types and saboteur route
+  deviation.
 - Eight-night progression and balance.
 - Per-building power priority and richer wave intel.
 - GUI visualization for attack events, power-source topology, and route
