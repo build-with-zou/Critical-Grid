@@ -4,7 +4,7 @@ import unittest
 
 from grid_td.buildings import Building, GunTower
 from grid_td.map import GridMap
-from grid_td.pathing import find_path
+from grid_td.pathing import cells_within_range, find_path
 from grid_td.position import Position
 
 
@@ -97,6 +97,36 @@ class OpenGroundPathingTest(unittest.TestCase):
         self.assertIsNotNone(plan)
         assert plan is not None
         self.assertLessEqual(len(plan.route.points), 2)
+
+    def test_custom_goal_cells_stop_before_the_core(self) -> None:
+        goal = Position(3, 0)
+
+        plan = find_path(
+            self.grid_map,
+            [],
+            self.start,
+            enemy_speed=1.0,
+            breach_damage=1.0,
+            goal_cells=frozenset({goal}),
+        )
+
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertEqual(plan.route.points[-1], goal.center)
+
+    def test_attack_range_goal_cells_are_static_walkable(self) -> None:
+        center = Position(6, 6).center
+        build_only = make_map(
+            12,
+            12,
+            Position(9, 9),
+            build_only=frozenset({Position(6, 6)}),
+        )
+
+        goals = cells_within_range(build_only, center, 2.0)
+
+        self.assertIn(Position(6, 5), goals)
+        self.assertNotIn(Position(6, 6), goals)
 
     def test_invalid_arguments_are_rejected(self) -> None:
         for speed, damage, ratio in (

@@ -17,12 +17,12 @@ from math import isfinite
 from grid_td.buildings import Building, Core
 from grid_td.map import GridMap
 from grid_td.path import RoutePath
-from grid_td.position import Position, WorldPosition
+from grid_td.position import Position, WorldPosition, world_distance
 
 
 @dataclass(frozen=True)
 class PathPlan:
-    """A movement plan to the core or to the first breach target."""
+    """A movement plan to a goal or to the first breach target."""
 
     route: RoutePath
     time_seconds: float  # Selected total estimate; includes planned breaches.
@@ -84,6 +84,20 @@ def _compress_route(cells: list[Position]) -> RoutePath:
     return RoutePath(tuple(compressed))
 
 
+def cells_within_range(
+    grid_map: GridMap, center: WorldPosition, radius: float
+) -> frozenset[Position]:
+    """Return static-walkable cell centers within an inclusive attack radius."""
+    radius_value = _validate_positive_number(radius, "Attack range")
+    return frozenset(
+        Position(x, y)
+        for y in range(grid_map.height)
+        for x in range(grid_map.width)
+        if grid_map.is_walkable(Position(x, y))
+        and world_distance(center, Position(x, y).center) <= radius_value
+    )
+
+
 def find_path(
     grid_map: GridMap,
     buildings: list[Building],
@@ -92,8 +106,9 @@ def find_path(
     enemy_speed: float,
     breach_damage: float,
     breach_time_ratio: float = 1.5,
+    goal_cells: frozenset[Position] | None = None,
 ) -> PathPlan | None:
-    """Plan a route to the core, optionally breaching buildings.
+    """Plan a route to the core or a custom goal set.
 
     Args:
         grid_map: Static terrain and core geometry.
@@ -104,10 +119,14 @@ def find_path(
         breach_damage: Damage per second against a blocking building.
         breach_time_ratio: Choose a breach when the normal route takes more
             than this multiple of the breach route time.
+        goal_cells: Optional walkable goal cells. When omitted, goals are cells
+            adjacent to the core. Custom goals replace, rather than extend, the
+            core goal so infrastructure targeting does not accidentally finish
+            at the core.
 
     Returns:
-        A normal plan to a core-adjacent cell, a breach plan whose route ends
-        at the first building to attack, or `None` when no plan exists.
+        A normal plan to a goal cell, a breach plan whose route ends at the
+        first building to attack, or `None` when no plan exists.
 
     Raises:
         ValueError: Invalid speed/damage/ratio or an unwalkable start cell.
@@ -144,21 +163,25 @@ def find_path(
     core_cells = set(
         grid_map.core_footprint.cells(grid_map.core_position)
     )
-    goal_cells = {
-        neighbor
-        for cell in core_cells
-        for neighbor in cell.neighbors()
-        if neighbor in walkable_cells
-    }
-    goal_buildings = {
-        building.id
-        for building in alive_buildings
-        if any(
-            neighbor in core_cells
-            for cell in building.occupied_cells()
+    if goal_cells is None:
+        search_goals = {
+            neighbor
+            for cell in core_cells
             for neighbor in cell.neighbors()
-        )
-    }
+            if neighbor in walkable_cells
+        }
+        goal_buildings = {
+            building.id
+            for building in alive_buildings
+            if any(
+                neighbor in core_cells
+                for cell in building.occupied_cells()
+                for neighbor in cell.neighbors()
+            )
+        }
+    else:
+        search_goals = set(goal_cells) & walkable_cells
+        goal_buildings = set()
 
     building_adjacent_cells: dict[int, set[Position]] = {
         building.id: set() for building in alive_buildings
@@ -187,7 +210,7 @@ def find_path(
     start_key = _cell_key(start)
 
     def search(allow_buildings: bool) -> _SearchResult | None:
-        goals = set(goal_cells)
+        goals = set(search_goals)
         if allow_buildings:
             goals.update(goal_buildings)
 

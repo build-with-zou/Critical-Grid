@@ -7,12 +7,11 @@ independent instances from string templates. `WaveRunner` calls
 targets, applies damage, and settles rewards, and `TextRenderer` only reads
 their current positions.
 
-Enemies move along `GridMap.route`. Saboteurs can also attack power plants and
-power nodes when they enter their attack range; they do not yet change routes
-or attack other building types. Armored enemies subtract a flat armor value
-from positive hits while keeping a minimum of one damage. `path_progress` is
-physical distance along the centerline, in small-cell world units, not waypoint
-indices.
+Enemies follow per-enemy routes assigned by `GameState`. Saboteurs seek power
+plants first, then nodes, and can switch to higher-priority facilities that
+enter attack range. Armored enemies subtract a flat armor value from positive
+hits while keeping a minimum of one damage. `path_progress` is physical
+distance along the active route, not a waypoint index.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from grid_td.position import LEGACY_TILE_SIZE, Position, WorldPosition
 
 @dataclass
 class Enemy:
-    """Enemy state that towers can attack while it moves along a fixed route."""
+    """Enemy state that towers can attack while it moves along its active route."""
 
     name: str  # Display name or debug identifier.
     max_hp: float  # Maximum health.
@@ -46,6 +45,8 @@ class Enemy:
     breach_cooldown_remaining: float = 0.0  # Time until the next breach hit.
     route: RoutePath | None = None  # Per-enemy route assigned by GameState.
     breach_target_id: int | None = None  # Building blocking the current route.
+    target_building_id: int | None = None  # Infrastructure target for saboteurs.
+    targets_power_buildings: bool = False  # Whether to seek grid facilities.
     stalled: bool = False  # True when no path or breach plan is available.
 
     def __post_init__(self) -> None:
@@ -217,6 +218,7 @@ def create_enemy(kind: str) -> Enemy:
             attack_damage=1,
             attack_cooldown_seconds=1.0,
             breach_damage=2.0,
+            targets_power_buildings=True,
         ),
     }
 
@@ -236,5 +238,6 @@ def create_enemy(kind: str) -> Enemy:
         attack_damage=template.attack_damage,
         attack_cooldown_seconds=template.attack_cooldown_seconds,
         breach_damage=template.breach_damage,
+        targets_power_buildings=template.targets_power_buildings,
     )
 
