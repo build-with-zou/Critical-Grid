@@ -60,7 +60,7 @@ class EnemySnapshotContractTest(unittest.TestCase):
         self.assertEqual(enemy.attack_damage, 1)
         self.assertEqual(enemy.armor, 0)
 
-    def test_non_saboteur_has_breach_range_but_no_power_damage(self) -> None:
+    def test_non_saboteur_has_breach_range_and_conservative_building_damage(self) -> None:
         game = GameState(create_demo_map())
         basic = create_enemy("basic")
         basic.path_progress = 30.0
@@ -70,7 +70,7 @@ class EnemySnapshotContractTest(unittest.TestCase):
         enemy = cell.enemies[0]
 
         self.assertEqual(enemy.attack_range, 3.0)
-        self.assertEqual(enemy.attack_damage, 0)
+        self.assertEqual(enemy.attack_damage, 1)
 
 
 if __name__ == "__main__":
