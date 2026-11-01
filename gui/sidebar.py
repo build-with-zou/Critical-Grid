@@ -91,6 +91,12 @@ class Sidebar:
                 ),
             )
             self.speed_buttons[button] = multiplier
+        self.priority_button = UIButton(
+            pygame.Rect(PANEL_LEFT + 16, 534, 315, 32),
+            "Cycle Power Priority",
+            manager,
+            tool_tip_text="Cycle a mine or tower through High, Medium, and Low supply priority.",
+        )
         self.update_build_selection(None)
         self.update_speed_selection(1.0)
 
@@ -109,6 +115,7 @@ class Sidebar:
         sellable = building is not None and building.kind != "core"
         repairable = building is not None and building.hp < building.max_hp
         tower = building is not None and building.range is not None
+        priority_changeable = building is not None and building.power_draw > 0
         refund = round(building.cost * GameState.SELL_REFUND_RATIO) if sellable else 0
         self.sell_button.set_text(f"Sell Building (+{refund}g)" if sellable else "Sell Building")
         self.repair_button.set_text(
@@ -125,6 +132,7 @@ class Sidebar:
             (self.step_button, active and snapshot.status.phase == GamePhase.NIGHT),
             (self.intel_button, active),
             (self.overdraft_button, active),
+            (self.priority_button, active and priority_changeable),
         ):
             button.enable() if enabled else button.disable()
         for button in self.build_buttons:
@@ -208,9 +216,9 @@ class Sidebar:
             lines = (
                 f"{building.name} #{building.id}  {coordinate}",
                 f"HP {building.hp}/{building.max_hp}  Full repair: {building.repair_cost}g",
-                f"Grid: {grid}  Power eff. {snapshot.status.power.efficiency:.0%}",
-                f"Health eff. {building.health_efficiency:.0%}  Final eff. {building.efficiency:.0%}",
-                f"Rated supply {building.power_supply}  Demand {building.power_draw}",
+                f"Grid: {grid}  Priority {building.power_priority.value.upper()}",
+                f"Power eff. {building.power_efficiency:.0%}  Health eff. {building.health_efficiency:.0%}",
+                f"Final eff. {building.efficiency:.0%}  Rated supply {building.power_supply}  Demand {building.power_draw}",
             )
             if building.range is not None:
                 lines += (
