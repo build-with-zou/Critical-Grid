@@ -102,10 +102,18 @@ class PowerGrid:
         power_efficiencies = self._allocate_power(
             connected_buildings, total_supply
         )
-        transmission = self._calculate_transmission_qualities(buildings, connected_indices)
+        transmission, source_indices = self._calculate_transmission_qualities(
+            buildings, connected_indices
+        )
 
         for index, building in enumerate(buildings):
             building.connected_to_grid = index in connected_indices
+            source_index = source_indices.get(index)
+            building.power_source_id = (
+                buildings[source_index].id
+                if building.connected_to_grid and source_index is not None
+                else None
+            )
             quality = transmission.get(index, 0.0) if building.connected_to_grid else 0.0
             building.transmission_efficiency = quality
             electrical_efficiency = (
@@ -227,14 +235,16 @@ class PowerGrid:
         self,
         buildings: list[Building],
         connected_indices: set[int],
-    ) -> dict[int, float]:
-        """Return the best transmission quality for every connected building.
+    ) -> tuple[dict[int, float], dict[int, int | None]]:
+        """Return quality and direct source for every connected building.
 
         Core and power-plant sources have quality 1. A power node multiplies
         the best upstream quality by its own health efficiency, so chained
         damaged nodes compound. Consumers use the best quality among the
-        transmitters covering them, independent of distance. This is a
-        deterministic attenuation model; damaged nodes keep their full radius.
+        transmitters covering them, independent of distance. The source map
+        records the transmitter that produced each building's selected quality;
+        the core has no upstream source. This is a deterministic attenuation
+        model; damaged nodes keep their full radius.
         """
         transmitters = [
             index
@@ -243,9 +253,13 @@ class PowerGrid:
             and not buildings[index].is_destroyed
         ]
         qualities: dict[int, float] = {}
+        source_indices: dict[int, int | None] = {}
         for index in transmitters:
             building = buildings[index]
-            if isinstance(building, (Core, PowerPlant)):
+            if isinstance(building, Core):
+                qualities[index] = 1.0
+                source_indices[index] = None
+            elif isinstance(building, PowerPlant):
                 qualities[index] = 1.0
 
         nodes = [
@@ -256,38 +270,60 @@ class PowerGrid:
             changed = False
             for index in nodes:
                 node = buildings[index]
-                best = max(
-                    (
-                        quality * node.health_efficiency
-                        for source_index, quality in qualities.items()
-                        if source_index != index
-                        and source_index in transmitters
-                        and world_distance(node.center, buildings[source_index].center)
-                        <= self.connection_radius
+                candidates = [
+                    (quality, source_index)
+                    for source_index, quality in qualities.items()
+                    if source_index != index
+                    and source_index in transmitters
+                    and world_distance(node.center, buildings[source_index].center)
+                    <= self.connection_radius
+                ]
+                if not candidates:
+                    continue
+                best_quality, best_source = max(
+                    candidates,
+                    key=lambda item: (
+                        item[0],
+                        -world_distance(
+                            node.center, buildings[item[1]].center
+                        ),
+                        -buildings[item[1]].id,
                     ),
-                    default=0.0,
                 )
+                best = best_quality * node.health_efficiency
                 if best > qualities.get(index, 0.0):
                     qualities[index] = best
+                    source_indices[index] = best_source
                     changed = True
 
         for index in connected_indices:
             building = buildings[index]
             if index in transmitters:
                 continue
-            best = max(
-                (
-                    qualities[source_index]
-                    for source_index in transmitters
-                    if source_index in qualities
-                    and world_distance(building.center, buildings[source_index].center)
-                    <= self.connection_radius
+            candidates = [
+                source_index
+                for source_index in transmitters
+                if source_index in qualities
+                and world_distance(building.center, buildings[source_index].center)
+                <= self.connection_radius
+            ]
+            if not candidates:
+                qualities[index] = 1.0
+                continue
+            best_source = max(
+                candidates,
+                key=lambda source_index: (
+                    qualities[source_index],
+                    -world_distance(
+                        building.center, buildings[source_index].center
+                    ),
+                    -buildings[source_index].id,
                 ),
-                default=1.0,
             )
-            qualities[index] = best
+            qualities[index] = qualities[best_source]
+            source_indices[index] = best_source
 
-        return qualities
+        return qualities, source_indices
 
     def _calculate_efficiency(self, total_supply: int, total_demand: int) -> float:
         """Calculate the shared whole-grid efficiency from supply and demand.
