@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from grid_td.buildings import PowerPriority
 from grid_td.game_state import BuildingSnapshot, EnemySnapshot, GamePhase, GameSnapshot, GameState
 from grid_td.map import create_demo_map
 from grid_td.position import Position
@@ -140,6 +141,27 @@ class CriticalGridGUI:
             self._buy_wave_intel()
         elif button == self.sidebar.overdraft_button:
             self._take_core_overdraft()
+        elif button == self.sidebar.priority_button:
+            self._cycle_selected_priority()
+
+    def _cycle_selected_priority(self) -> None:
+        """Cycle the selected consumer through the three supply tiers."""
+        snapshot = self.game.snapshot()
+        if snapshot.status.is_finished:
+            self.message = snapshot.status.result_message
+            return
+        building = self._selected_building(snapshot)
+        if building is None or building.power_draw <= 0:
+            self.message = "Select a mine or tower first, then cycle its power priority."
+            return
+        priorities = tuple(PowerPriority)
+        next_priority = priorities[(priorities.index(building.power_priority) + 1) % len(priorities)]
+        try:
+            self.game.set_power_priority(building.id, next_priority)
+        except ValueError as error:
+            self.message = str(error)
+        else:
+            self.message = f"{building.name} priority set to {next_priority.value.upper()}."
 
     def _buy_wave_intel(self) -> None:
         """Buy the core's current-wave briefing and report the actual charge."""

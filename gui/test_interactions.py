@@ -12,7 +12,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
-from grid_td.buildings import GunTower, PowerPlant
+from grid_td.buildings import GunTower, PowerPlant, PowerPriority
 from grid_td.enemies import create_enemy
 from grid_td.game_state import GamePhase, GameState
 from grid_td.map import create_demo_map
@@ -121,6 +121,14 @@ class BuildingInteractionTest(unittest.TestCase):
         lines = "\n".join(Sidebar.inspection_lines(self.gui.game.snapshot(), plant.position))
         for label in ("Power eff.", "Health eff.", "Final eff.", "Rated supply", "Full repair:"):
             self.assertIn(label, lines)
+
+    def test_priority_button_routes_through_game_state(self) -> None:
+        tower = self.gui.game.build("gun_tower", Position(30, 6))
+        self.click_cell(tower.position)
+        self.assertEqual(tower.power_priority, PowerPriority.HIGH)
+        self.gui._handle_button(self.gui.sidebar.priority_button)
+        self.assertEqual(tower.power_priority, PowerPriority.MEDIUM)
+        self.assertIn("MEDIUM", self.gui.message)
 
     def test_rejected_sale_displays_reason_without_dropping_selection(self) -> None:
         self.gui.game.build("power_node", Position(30, 9))
