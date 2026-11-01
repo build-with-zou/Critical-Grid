@@ -40,9 +40,9 @@ relay power. Connected consumers now use per-building HIGH/MEDIUM/LOW power
 priorities, with shortages allocated from high to low tiers. Every building has mutable health, condition-based efficiency,
 and gold-funded repair. Saboteurs now seek power plants first, then nodes, and
 switch to higher-priority facilities that enter attack range. Enemies use
-per-enemy open-ground pathfinding with buildings as blockers and automatic
-breach attacks; other enemy building targets and GUI route previews are still
-pending.
+per-enemy open-ground pathfinding with buildings as blockers, automatic breach
+attacks, and conservative attacks on mines and towers; GUI route previews are
+still pending.
 Treat the code as the behavioral source of truth when changing the prototype;
 use the design document for planned features and unresolved rules.
 
