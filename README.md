@@ -36,7 +36,8 @@ frontends can render the same source of truth.
 The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
 power nodes using a six-world-unit coverage radius; ordinary buildings do not
-relay power. Every building has mutable health, condition-based efficiency,
+relay power. Connected consumers now use per-building HIGH/MEDIUM/LOW power
+priorities, with shortages allocated from high to low tiers. Every building has mutable health, condition-based efficiency,
 and gold-funded repair. Saboteurs now seek power plants first, then nodes, and
 switch to higher-priority facilities that enter attack range. Enemies use
 per-enemy open-ground pathfinding with buildings as blockers and automatic
