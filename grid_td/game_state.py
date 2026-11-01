@@ -13,7 +13,7 @@ Key state-flow boundaries:
 * New games start in DAY with no active wave runner.
 * `start_next_wave()` ends planning and creates a fresh NIGHT runner.
 * During NIGHT, `step()` spawns enemies, recalculates power, runs tower
-  attacks, moves enemies, then lets saboteurs attack their power-building targets. During DAY
+  attacks, moves enemies, then resolves enemy attacks on buildings. During DAY
   it leaves simulation time frozen.
 * `end_wave()` settles income, interest, and repairs, then enters the next
   DAY or records VICTORY. Core destruction records DEFEAT immediately.
@@ -136,7 +136,7 @@ class EnemySnapshot:
     attack_damage: int = 0  # Damage per building attack.
     path: tuple[WorldPosition, ...] = ()  # Current route points for preview.
     breach_target_id: int | None = None  # Building this enemy plans to breach.
-    target_building_id: int | None = None  # Infrastructure target for saboteurs.
+    target_building_id: int | None = None  # Current active building attack target.
 
 
 @dataclass(frozen=True)
@@ -1009,9 +1009,9 @@ class GameState:
 
         Order:
             Spawn due enemies first, recalculate power, run tower attacks,
-            advance enemies, and finally let saboteurs attack their power-building targets. This
-            lets towers respond to newly spawned enemies while node attacks use
-            the enemies' updated positions.
+            advance enemies, and finally resolve enemy attacks on buildings.
+            This lets towers respond to newly spawned enemies while building
+            attacks use the enemies' updated positions.
 
         Side effects:
             Changes the shared logical clock, wave runner state, building
@@ -1062,7 +1062,7 @@ class GameState:
         self._refresh_saboteur_targets()
         self._advance_enemies(delta)
         if self.core_hp > 0:
-            self._enemies_attack_power_buildings(delta)
+            self._enemies_attack_buildings(delta)
             self.recalculate_power()
 
         if self.core_hp <= 0:
@@ -1453,21 +1453,56 @@ class GameState:
 
         self.enemies = [enemy for enemy in self.enemies if enemy not in escaped]
 
-    def _enemies_attack_power_buildings(self, seconds: float) -> None:
-        """Resolve breach attacks and saboteur attacks on power buildings.
-
-        Breach hits deal one point per `breach_cooldown_seconds`, keeping
-        building HP integral while preserving the configured damage-per-second
-        differences. Saboteurs that are currently breaching a blocker do not
-        also attack a power building in the same step. Destroying any building
-        triggers a path refresh for every living enemy.
-        """
-        targets = [
+    def _enemy_attack_candidates(self, enemy: Enemy) -> list[Building]:
+        """Return living buildings this enemy type is allowed to attack."""
+        if enemy.targets_power_buildings:
+            kinds = (PowerPlant, PowerNode)
+        else:
+            kinds = (Mine, Tower)
+        return [
             building
             for building in self.buildings
-            if isinstance(building, (PowerPlant, PowerNode))
-            and not building.is_destroyed
+            if isinstance(building, kinds) and not building.is_destroyed
         ]
+
+    def _select_enemy_building_target(
+        self, enemy: Enemy, position: WorldPosition
+    ) -> Building | None:
+        """Choose an in-range target using stable type, distance, and ID rules."""
+        in_range = [
+            building
+            for building in self._enemy_attack_candidates(enemy)
+            if world_distance(position, building.center) <= enemy.attack_range
+        ]
+        if not in_range:
+            return None
+        if enemy.targets_power_buildings:
+            return min(
+                in_range,
+                key=lambda building: (
+                    0 if isinstance(building, PowerPlant) else 1,
+                    world_distance(position, building.center),
+                    building.id,
+                ),
+            )
+        return min(
+            in_range,
+            key=lambda building: (
+                world_distance(position, building.center),
+                building.id,
+            ),
+        )
+
+    def _enemies_attack_buildings(self, seconds: float) -> None:
+        """Resolve breach attacks and active attacks on enemy-specific targets.
+
+        Breach hits deal one point per `breach_cooldown_seconds`, preserving
+        the configured damage-per-second differences. A breaching enemy does
+        not also perform a normal building attack in the same step. Saboteurs
+        target power facilities, while other enemy types target mines and
+        towers. Destroying any building triggers a path refresh for all living
+        enemies.
+        """
         for enemy in self.enemies:
             enemy.tick_attack_cooldown(seconds)
             enemy.tick_breach_cooldown(seconds)
@@ -1488,20 +1523,24 @@ class GameState:
 
         targeted_ids: set[int] = set()
         for enemy in self.enemies:
-            if enemy.id in breaching_ids or enemy.target_building_id is None:
+            if enemy.id in breaching_ids or not enemy.can_attack_buildings:
                 continue
             target = self._find_target_building(enemy)
             if target is None:
+                enemy.target_building_id = None
                 continue
-            if not enemy.can_attack_buildings or not self._in_breach_range(enemy, target):
+            if target not in self._enemy_attack_candidates(enemy):
+                enemy.target_building_id = None
+                continue
+            if not self._in_breach_range(enemy, target):
+                if not enemy.targets_power_buildings:
+                    enemy.target_building_id = None
                 continue
             target.take_damage(enemy.attack_damage)
             enemy.reset_attack_cooldown()
             targeted_ids.add(enemy.id)
             if target.is_destroyed:
                 destroyed_any = True
-                if target in targets:
-                    targets.remove(target)
 
         for enemy in self.enemies:
             if enemy.id in breaching_ids or enemy.id in targeted_ids:
@@ -1509,29 +1548,16 @@ class GameState:
             if not enemy.can_attack_buildings:
                 continue
 
-            enemy_position = self._enemy_world_position(enemy)
-            in_range = [
-                building
-                for building in targets
-                if not building.is_destroyed
-                and world_distance(enemy_position, building.center) <= enemy.attack_range
-            ]
-            if not in_range:
-                continue
-
-            target = min(
-                in_range,
-                key=lambda building: (
-                    0 if isinstance(building, PowerPlant) else 1,
-                    world_distance(enemy_position, building.center),
-                ),
+            target = self._select_enemy_building_target(
+                enemy, self._enemy_world_position(enemy)
             )
+            if target is None:
+                continue
+            enemy.target_building_id = target.id
             target.take_damage(enemy.attack_damage)
             enemy.reset_attack_cooldown()
             if target.is_destroyed:
                 destroyed_any = True
-                if target in targets:
-                    targets.remove(target)
 
         if destroyed_any:
             self._replan_all_enemies()
