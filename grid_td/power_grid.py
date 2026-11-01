@@ -3,17 +3,18 @@
 This module sits between game state and building entities. `GameState` calls
 `PowerGrid.calculate()` after building and on every simulation step. That
 method propagates coverage from the core through power plants and power nodes,
-then connects each consumer to its nearest reachable transmitter. The returned
-`PowerReport` is read by the status line and tests.
+then connects each consumer to its nearest reachable transmitter. Connected
+consumer demand is allocated by `PowerPriority` before health and transmission
+effects are applied. The returned `PowerReport` is read by the status line and tests.
 
 Only the core, power plants, and power nodes are transmitters. A powered mine
 or tower cannot relay coverage to another building. Power plants contribute
 health-scaled supply, while the core keeps its nominal base supply until the
-cell is destroyed. The reported efficiency is the shared electrical multiplier;
-each building's stored efficiency also includes its own health-condition and
-best-path transmission quality. Only power nodes attenuate transmission; core
-and plant sources have quality 1.0. There is no per-building power priority
-allocation. Any connectivity-rule change can affect towers, mines, wave
+cell is destroyed. The reported efficiency remains the aggregate supply/demand
+ratio for status compatibility; each building's stored efficiency includes its
+own priority allocation, health condition, and best-path transmission quality.
+Only power nodes attenuate transmission; core and plant sources have quality
+1.0. Any connectivity or allocation change can affect towers, mines, wave
 difficulty, and rendered state at the same time.
 """
 
@@ -22,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 
-from grid_td.buildings import Building, Core, PowerNode, PowerPlant
+from grid_td.buildings import Building, Core, PowerNode, PowerPlant, PowerPriority
 from grid_td.map import GridMap
 from grid_td.position import world_distance
 
@@ -98,14 +99,22 @@ class PowerGrid:
         )
         total_demand = sum(building.power_draw for building in connected_buildings)
         efficiency = self._calculate_efficiency(total_supply, total_demand)
+        power_efficiencies = self._allocate_power(
+            connected_buildings, total_supply
+        )
         transmission = self._calculate_transmission_qualities(buildings, connected_indices)
 
         for index, building in enumerate(buildings):
             building.connected_to_grid = index in connected_indices
             quality = transmission.get(index, 0.0) if building.connected_to_grid else 0.0
             building.transmission_efficiency = quality
+            electrical_efficiency = (
+                power_efficiencies.get(building.id, 1.0)
+                if building.connected_to_grid else 0.0
+            )
+            building.power_efficiency = electrical_efficiency
             building.efficiency = (
-                building.effective_efficiency(efficiency, quality)
+                building.effective_efficiency(electrical_efficiency, quality)
                 if building.connected_to_grid else 0.0
             )
 
@@ -115,6 +124,42 @@ class PowerGrid:
             total_demand=total_demand,
             efficiency=efficiency,
         )
+
+    def _allocate_power(
+        self, connected_buildings: list[Building], total_supply: int
+    ) -> dict[int, float]:
+        """Allocate connected supply in high-to-low priority order.
+
+        Consumers in the same priority tier share any shortage proportionally
+        to their nominal demand. A tier with no remaining supply is fully
+        unpowered; this allows low-priority buildings to shut down while
+        higher-priority defenses keep operating.
+        """
+        allocation: dict[int, float] = {
+            building.id: 1.0
+            for building in connected_buildings
+            if building.power_draw <= 0
+        }
+        remaining_supply = max(0.0, float(total_supply))
+        for priority in (
+            PowerPriority.HIGH,
+            PowerPriority.MEDIUM,
+            PowerPriority.LOW,
+        ):
+            tier = [
+                building
+                for building in connected_buildings
+                if building.power_draw > 0
+                and building.power_priority == priority
+            ]
+            tier_demand = sum(building.power_draw for building in tier)
+            if tier_demand <= 0:
+                continue
+            tier_factor = min(1.0, remaining_supply / tier_demand)
+            for building in tier:
+                allocation[building.id] = tier_factor
+            remaining_supply = max(0.0, remaining_supply - tier_demand)
+        return allocation
 
     def _find_connected_indices(
         self, grid_map: GridMap, buildings: list[Building]

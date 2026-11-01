@@ -39,6 +39,7 @@ from grid_td.buildings import (
     Mine,
     PowerNode,
     PowerPlant,
+    PowerPriority,
     SlowTower,
     Tower,
     create_building,
@@ -95,6 +96,8 @@ class BuildingSnapshot:
     power_supply: int  # Power provided when connected.
     power_draw: int  # Power consumed when connected.
     connected_to_grid: bool  # Whether the latest power pass reached it.
+    power_priority: PowerPriority  # Supply allocation tier for consumers.
+    power_efficiency: float  # Electrical allocation before condition/transmission.
     efficiency: float  # Final work multiplier after power, health and transmission.
     needs_repair: bool  # Whether wave settlement should charge repair cost.
     width: int
@@ -464,6 +467,8 @@ class GameState:
             power_supply=building.power_supply,
             power_draw=building.power_draw,
             connected_to_grid=building.connected_to_grid,
+            power_priority=building.power_priority,
+            power_efficiency=building.power_efficiency,
             efficiency=building.efficiency,
             needs_repair=building.needs_repair,
             width=building.width,
@@ -619,6 +624,38 @@ class GameState:
         self.recalculate_power()
         self._replan_all_enemies()
         return building
+
+    def set_power_priority(
+        self, building_id: int, priority: PowerPriority | str
+    ) -> None:
+        """Set the supply-allocation tier for a connected consumer.
+
+        Priority changes are available during both DAY and NIGHT. Sources,
+        relays, and the core have no power demand, so assigning them a tier is
+        rejected instead of creating a setting with no observable effect.
+        """
+        if self.is_finished or self.core_hp <= 0:
+            raise ValueError("Cannot change power priority after the game has ended.")
+        if (
+            isinstance(building_id, bool)
+            or not isinstance(building_id, int)
+            or building_id <= 0
+        ):
+            raise ValueError("Building ID must be a positive integer.")
+        building = next(
+            (candidate for candidate in self.buildings if candidate.id == building_id),
+            None,
+        )
+        if building is None:
+            raise ValueError(f"Building not found: {building_id}")
+        if building.power_draw <= 0:
+            raise ValueError("Only power-consuming buildings have a priority.")
+        try:
+            selected = priority if isinstance(priority, PowerPriority) else PowerPriority(priority)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Unknown power priority: {priority}") from exc
+        building.power_priority = selected
+        self.recalculate_power()
 
     def repair_building(self, building_id: int) -> int:
         """Pay gold to instantly restore any existing building to full HP.

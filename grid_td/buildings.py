@@ -11,9 +11,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from math import floor
+from enum import Enum
 from typing import ClassVar
 
 from grid_td.position import Footprint, LEGACY_TILE_SIZE, Position, WorldPosition
+
+
+class PowerPriority(str, Enum):
+    """Priority used when connected demand exceeds available supply."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
 
 @dataclass
@@ -34,6 +43,8 @@ class Building:
     current_hp: int | None = None  # Mutable health; initialized from max_hp.
     power_supply: int = 0  # Power supply counted after grid connection.
     power_draw: int = 0  # Power demand counted after grid connection.
+    power_priority: PowerPriority = PowerPriority.MEDIUM
+    power_efficiency: float = 0.0  # Allocation result before condition/transmission.
     efficiency: float = 0.0  # Final work multiplier from power, health and transmission.
     transmission_efficiency: float = 1.0  # Node-chain transmission quality.
     connected_to_grid: bool = False  # Whether the core can reach this building.
@@ -180,6 +191,7 @@ class Core(Building):
             max_hp=30,
             power_supply=10,
             power_draw=0,
+            power_priority=PowerPriority.HIGH,
             efficiency=1.0,
             connected_to_grid=True,
         )
@@ -203,6 +215,7 @@ class Mine(Building):
             max_hp=8,
             power_supply=0,
             power_draw=1,
+            power_priority=PowerPriority.LOW,
         )
         self.income = 12
 
@@ -229,6 +242,7 @@ class PowerPlant(Building):
             max_hp=10,
             power_supply=10,
             power_draw=0,
+            power_priority=PowerPriority.HIGH,
         )
 
     @property
@@ -261,6 +275,7 @@ class PowerNode(Building):
             max_hp=6,
             power_supply=0,
             power_draw=0,
+            power_priority=PowerPriority.HIGH,
         )
 
 
@@ -341,6 +356,7 @@ class GunTower(Tower):
             cost=30,
             max_hp=8,
             power_draw=3,
+            power_priority=PowerPriority.HIGH,
             range=2 * LEGACY_TILE_SIZE + (self.HIGH_GROUND_BONUS if high_ground else 0),
             damage=4.0,
             cooldown_seconds=1.0,
@@ -365,6 +381,7 @@ class CannonTower(Tower):
             cost=45,
             max_hp=8,
             power_draw=5,
+            power_priority=PowerPriority.HIGH,
             range=2 * LEGACY_TILE_SIZE + (self.HIGH_GROUND_BONUS if high_ground else 0),
             damage=8.0,
             cooldown_seconds=2.0,
@@ -387,6 +404,7 @@ class SlowTower(Tower):
             cost=35,
             max_hp=8,
             power_draw=4,
+            power_priority=PowerPriority.HIGH,
             range=2 * LEGACY_TILE_SIZE + (self.HIGH_GROUND_BONUS if high_ground else 0),
             damage=1.0,
             cooldown_seconds=1.5,
