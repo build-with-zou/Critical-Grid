@@ -96,6 +96,7 @@ class BuildingSnapshot:
     power_supply: int  # Power provided when connected.
     power_draw: int  # Power consumed when connected.
     connected_to_grid: bool  # Whether the latest power pass reached it.
+    power_source_id: int | None  # Direct transmitter supplying this building.
     power_priority: PowerPriority  # Supply allocation tier for consumers.
     power_efficiency: float  # Electrical allocation before condition/transmission.
     efficiency: float  # Final work multiplier after power, health and transmission.
@@ -467,6 +468,7 @@ class GameState:
             power_supply=building.power_supply,
             power_draw=building.power_draw,
             connected_to_grid=building.connected_to_grid,
+            power_source_id=building.power_source_id,
             power_priority=building.power_priority,
             power_efficiency=building.power_efficiency,
             efficiency=building.efficiency,

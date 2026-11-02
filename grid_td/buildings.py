@@ -48,6 +48,7 @@ class Building:
     efficiency: float = 0.0  # Final work multiplier from power, health and transmission.
     transmission_efficiency: float = 1.0  # Node-chain transmission quality.
     connected_to_grid: bool = False  # Whether the core can reach this building.
+    power_source_id: int | None = None  # Direct transmitter supplying this building.
     needs_repair: bool = False  # Repair marker left by overload-style actions.
     footprint: Footprint = field(init=False)
 

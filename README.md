@@ -42,7 +42,8 @@ and gold-funded repair. Saboteurs now seek power plants first, then nodes, and
 switch to higher-priority facilities that enter attack range. Enemies use
 per-enemy open-ground pathfinding with buildings as blockers, automatic breach
 attacks, and conservative attacks on mines and towers; GUI route previews are
-still pending.
+still pending. `BuildingSnapshot.power_source_id` exposes the direct connected
+transmitter ID; the core and disconnected buildings report `None`.
 Treat the code as the behavioral source of truth when changing the prototype;
 use the design document for planned features and unresolved rules.
 
