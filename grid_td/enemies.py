@@ -45,7 +45,7 @@ class Enemy:
     breach_cooldown_remaining: float = 0.0  # Time until the next breach hit.
     route: RoutePath | None = None  # Per-enemy route assigned by GameState.
     breach_target_id: int | None = None  # Building blocking the current route.
-    target_building_id: int | None = None  # Infrastructure target for saboteurs.
+    target_building_id: int | None = None  # Current active building attack target.
     targets_power_buildings: bool = False  # Whether to seek grid facilities.
     stalled: bool = False  # True when no path or breach plan is available.
 
@@ -187,6 +187,8 @@ def create_enemy(kind: str) -> Enemy:
             damage_to_core=1,
             reward=4,
             attack_range=3.0,
+            attack_damage=1,
+            attack_cooldown_seconds=6.0,
             breach_damage=1.0,
         ),
         "fast": Enemy(
@@ -196,6 +198,8 @@ def create_enemy(kind: str) -> Enemy:
             damage_to_core=1,
             reward=5,
             attack_range=3.0,
+            attack_damage=1,
+            attack_cooldown_seconds=5.0,
             breach_damage=0.75,
         ),
         "armored": Enemy(
@@ -206,6 +210,8 @@ def create_enemy(kind: str) -> Enemy:
             reward=8,
             armor=2,
             attack_range=3.0,
+            attack_damage=1,
+            attack_cooldown_seconds=8.0,
             breach_damage=0.5,
         ),
         "saboteur": Enemy(

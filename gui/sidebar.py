@@ -259,6 +259,11 @@ class Sidebar:
             f"Kill reward {enemy.reward}g  Core damage {enemy.damage_to_core}",
             f"Route progress {enemy.path_progress:.1f} world units",
             f"World ({enemy.world_position.x:.1f}, {enemy.world_position.y:.1f})",
+            (
+                f"Building target: #{enemy.target_building_id}"
+                if enemy.target_building_id is not None
+                else "Building target: None"
+            ),
         )
 
     def _text(
