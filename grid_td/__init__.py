@@ -2,10 +2,10 @@
 
 This package sits between the application entry point and concrete domain
 objects. It provides pure Python game logic that `main.py` or tests can drive
-directly. The main modules cover maps and coordinates, buildings and enemies,
-wave generation, power-grid calculation, global state, and text rendering.
-There are currently no package-level re-exports; callers should import public
-types from their specific submodules.
+directly. The main modules cover maps and coordinates, level loading, buildings
+and enemies, wave generation, power-grid calculation, global state, and text
+rendering. There are currently no package-level re-exports; callers should
+import public types from their specific submodules.
 
 The typical call graph has `GameState` composing `GridMap`, `Building`,
 `Enemy`, `PowerGrid`, and `WaveRunner`, while presentation layers read

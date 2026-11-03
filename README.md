@@ -11,6 +11,7 @@ flow is:
 
 ```text
 main.py / gui/gui.py
+  -> LevelDefinition / demo wrappers   TOML map, waves and starting resources
   -> GameState
      -> GridMap / Position       map and coordinate rules
      -> Building / Enemy         mutable domain entities
@@ -19,6 +20,12 @@ main.py / gui/gui.py
      -> snapshot()                read-only presentation contract
   -> TextRenderer / GUI          presentation consumers
 ```
+
+The demo level is defined by `levels/demo.toml`. `grid_td/levels.py` parses
+and validates that document, and `GameState.from_level()` uses its map, wave
+schedule, starting gold, and starting core health. The older
+`create_demo_map()` and `create_demo_waves()` helpers remain as compatibility
+wrappers around the same file.
 
 `GameState.step(seconds)` is the simulation boundary. Each NIGHT step spawns due
 enemies and assigns their paths, recalculates power, lets connected towers
@@ -50,17 +57,74 @@ use the design document for planned features and unresolved rules.
 Recommended reading order:
 
 1. `main.py` for the runnable scenario.
-2. `grid_td/game_state.py` for orchestration and state transitions.
-3. `GameState.snapshot()` and its snapshot dataclasses for the GUI/text read
+2. `grid_td/levels.py` and `levels/demo.toml` for the level document and loader.
+3. `grid_td/game_state.py` for orchestration and state transitions.
+4. `GameState.snapshot()` and its snapshot dataclasses for the GUI/text read
    contract.
-4. `grid_td/buildings.py`, `grid_td/enemies.py`, and `grid_td/waves.py` for
+5. `grid_td/buildings.py`, `grid_td/enemies.py`, and `grid_td/waves.py` for
    domain behavior.
-5. `grid_td/power_grid.py` for connectivity and efficiency side effects.
-6. `grid_td/map.py`, `grid_td/position.py`, and `grid_td/renderer.py` for
+6. `grid_td/power_grid.py` for connectivity and efficiency side effects.
+7. `grid_td/map.py`, `grid_td/position.py`, and `grid_td/renderer.py` for
    supporting rules and output.
-7. `gui/gui.py` for the Pygame frontend and its use of public commands.
-8. `tests/` for the currently protected behavior, with `test_core_loop.py` as
+8. `gui/gui.py` for the Pygame frontend and its use of public commands.
+9. `tests/` for the currently protected behavior, with `test_core_loop.py` as
    the main end-to-end entry point.
+
+## Level Configuration
+
+A level document is a TOML file under `levels/`. It owns the fixed map, the
+wave schedule, and the starting resources. The loader rejects unknown fields,
+malformed values, unknown enemy kinds, out-of-bounds terrain, overlapping
+terrain categories, and routes whose centerline is not walkable.
+
+```toml
+name = "Example Level"
+starting_gold = 180
+starting_core_hp = 30
+
+[map]
+width = 36
+height = 21
+core_position = [30, 3]
+core_footprint = [3, 3]
+route = [[1, 13], [28, 13], [28, 4]]
+
+[map.terrain]
+# Rectangles are [x, y, width, height] in small-cell coordinates.
+road = [[0, 12, 30, 3], [27, 3, 3, 12]]
+mine = [[6, 3, 3, 3], [24, 15, 3, 3]]
+high_ground = [[12, 6, 3, 3], [21, 6, 3, 3]]
+illegal = [[0, 0, 3, 3], [3, 0, 3, 3]]
+walk_only = []
+build_only = []
+
+[[waves]]
+name = "Wave 1"
+briefing = "Basic enemies."
+
+[[waves.groups]]
+enemy_kind = "basic"
+count = 5
+interval_seconds = 1.5
+start_delay_seconds = 0.0
+```
+
+Load a level explicitly and start a game from it:
+
+```python
+from grid_td.game_state import GameState
+from grid_td.levels import load_level
+
+game = GameState.from_level(load_level("levels/demo.toml"))
+```
+
+`load_demo_level()` resolves the bundled demo path without depending on the
+current working directory. Terrain categories must not overlap each other or
+the core footprint. Omit `road` to default to the route centerline; omit
+`core_footprint` to use `3 x 3`. Wave `count` must be at least one,
+`interval_seconds` must be positive, and `start_delay_seconds` must be
+non-negative. `create_demo_map()` and `create_demo_waves()` still work and load
+the same demo document.
 
 ## Wave Lifecycle
 
@@ -395,8 +459,11 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 ├── README.md               # Project structure and usage guide
 ├── requirements.txt        # GUI runtime dependencies
 ├── main.py                 # Runs a minimal text-based demo
+├── levels/
+│   └── demo.toml           # TOML level: map, waves, starting resources
 ├── grid_td/
 │   ├── __init__.py         # Package entry
+│   ├── levels.py           # TOML level loading and validation
 │   ├── position.py         # Cells, world positions, footprints and distance policy
 │   ├── path.py             # Distance-based fixed-route sampling
 │   ├── pathing.py          # Per-enemy open-ground and breach pathfinding
@@ -421,6 +488,9 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 ```
 
 ## Run
+
+Python 3.11 or newer is required because level loading uses the standard
+library `tomllib` module.
 
 Text demo:
 
@@ -454,6 +524,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 
 ## Current Features
 
+- TOML-driven level definitions for the fixed map, wave schedule, and starting
+  resources.
 - 36 by 21 small-cell map with configurable rectangular building footprints.
 - Per-enemy open-ground pathfinding with buildings as blockers, automatic
   breach attacks, and four enemy types including flat armor.
@@ -483,6 +555,7 @@ work is:
 - Pathfinding finalization: GUI path previews and route-aware build previews.
 - Combat completion: enemy attacks on more building types.
 - Eight-night progression and balance.
+- Additional level documents and GUI level selection.
 - Per-building power priority and richer wave intel.
 - GUI visualization for attack events, power-source topology, and route
   previews.
