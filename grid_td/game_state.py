@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from math import isfinite
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from grid_td.buildings import (
     Building,
@@ -50,7 +50,10 @@ from grid_td.path import RoutePath
 from grid_td.pathing import cells_within_range, find_path
 from grid_td.position import DISTANCE_METRIC, Position, WorldPosition, world_distance
 from grid_td.power_grid import PowerGrid, PowerReport
-from grid_td.waves import WaveRunner, create_demo_waves
+from grid_td.waves import Wave, WaveRunner, create_demo_waves
+
+if TYPE_CHECKING:
+    from grid_td.levels import LevelDefinition
 
 
 class GamePhase(str, Enum):
@@ -274,11 +277,13 @@ class GameState:
         elapsed_seconds: float = 0.0,
         buildings: list[Building] | None = None,
         enemies: list[Enemy] | None = None,
+        waves: tuple[Wave, ...] | None = None,
     ) -> None:
         """Keep the existing constructor while storing core HP on the core.
 
         A custom initializer lets core_hp remain a compatibility property
-        rather than a second mutable health counter.
+        rather than a second mutable health counter. Callers may inject a
+        level-specific wave tuple; omitting it keeps the demo schedule.
         """
         self.grid_map = grid_map
         self.gold = gold
@@ -286,20 +291,18 @@ class GameState:
         self.elapsed_seconds = elapsed_seconds
         self.buildings = buildings if buildings is not None else []
         self.enemies = enemies if enemies is not None else []
+        self.waves = waves if waves is not None else create_demo_waves()
         self.phase = GamePhase.DAY
         self.__post_init__(core_hp)
 
     def __post_init__(self, core_hp: int = 30) -> None:
         """Initialize runtime collaborators, wave state, the core, and power.
 
-        Attributes such as `power_grid`, `waves`, and `wave_index` are derived
-        runtime state and are not exposed as dataclass constructor parameters,
-        which avoids inconsistent schedulers being injected by callers. The
-        core is added to the building list here, so a passed-in `buildings`
-        list is extended in place.
+        Attributes such as `power_grid`, `waves`, and `wave_index` are runtime
+        state. The core is added to the building list here, so a passed-in
+        `buildings` list is extended in place.
         """
         self.power_grid = PowerGrid()
-        self.waves = create_demo_waves()
         self.wave_index = 0
         # The upcoming wave index exists during planning, but its clock must
         # not start until the player explicitly ends the day.
@@ -317,6 +320,16 @@ class GameState:
         core.footprint = self.grid_map.core_footprint
         self._add_building(core)
         self.recalculate_power()
+
+    @classmethod
+    def from_level(cls, level: "LevelDefinition") -> "GameState":
+        """Create a game using a level's map, waves, and starting resources."""
+        return cls(
+            level.grid_map,
+            gold=level.starting_gold,
+            core_hp=level.starting_core_hp,
+            waves=level.waves,
+        )
 
     @property
     def core_hp(self) -> int:

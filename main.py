@@ -1,9 +1,9 @@
 """Run the minimal executable Critical Grid demo.
 
-This module sits at the application entry layer. It assembles `GridMap`,
-`GameState`, and `TextRenderer`, then drives one fixed sample defense layout.
-Core rules should not live here: maps, buildings, waves, and state transitions
-belong to the domain modules inside the `grid_td` package.
+This module sits at the application entry layer. It loads a level definition,
+assembles `GameState` and `TextRenderer`, then drives one fixed sample defense
+layout. Core rules should not live here: maps, buildings, waves, and state
+transitions belong to the domain modules inside the `grid_td` package.
 
 The public entry point is `main()`. `build_demo_defense()` only prepares a
 fixed scenario for the demo. Simulation data flows through `GameState.step()`,
@@ -14,7 +14,7 @@ startup.
 """
 
 from grid_td.game_state import GamePhase, GameState
-from grid_td.map import create_demo_map
+from grid_td.levels import load_demo_level
 from grid_td.position import Position
 from grid_td.renderer import TextRenderer
 
@@ -50,7 +50,7 @@ def main() -> None:
     economic settlement and next-wave startup are called explicitly here so
     the demo keeps the state-machine boundary visible.
     """
-    game = GameState(create_demo_map())
+    game = GameState.from_level(load_demo_level())
     renderer = TextRenderer()
 
     build_demo_defense(game)
