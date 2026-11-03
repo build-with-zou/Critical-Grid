@@ -27,6 +27,7 @@ class SpawnGroup:
     count: int  # Maximum number of enemies spawned by this group.
     interval_seconds: float  # Logical interval between enemies in this group.
     start_delay_seconds: float = 0.0  # First-spawn delay from wave start.
+    entrance: int = 0  # Zero-based entry in GridMap.spawn_entrances.
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,9 @@ class WaveRunner:
                 if self.elapsed_seconds < spawn_time:
                     break
 
-                spawned_enemies.append(create_enemy(group.enemy_kind))
+                enemy = create_enemy(group.enemy_kind)
+                enemy.entrance_index = group.entrance
+                spawned_enemies.append(enemy)
                 spawned += 1
 
             self.spawned_counts[index] = spawned

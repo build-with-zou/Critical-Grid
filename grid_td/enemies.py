@@ -34,6 +34,7 @@ class Enemy:
     reward: int  # Gold immediately awarded to GameState when defeated.
     armor: int = 0  # Flat damage removed from each positive incoming hit.
     id: int = 0  # Runtime ID assigned by GameState when spawned; 0 means unassigned.
+    entrance_index: int = 0  # Spawn point index assigned by WaveRunner.
     path_progress: float = 0.0  # Continuous progress from the route start.
     hp: float = 0.0  # Current health; non-positive values are reset to full.
     slow_seconds_remaining: float = 0.0  # Logical seconds of slow remaining.

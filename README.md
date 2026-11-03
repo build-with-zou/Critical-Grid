@@ -88,10 +88,16 @@ height = 21
 core_position = [30, 3]
 core_footprint = [3, 3]
 route = [[1, 13], [28, 13], [28, 4]]
+entrances = [[1, 13], [35, 16]]
 
 [map.terrain]
 # Rectangles are [x, y, width, height] in small-cell coordinates.
-road = [[0, 12, 30, 3], [27, 3, 3, 12]]
+road = [
+  [0, 12, 30, 3],
+  [27, 3, 3, 12],
+  [30, 6, 3, 13],
+  [30, 15, 6, 3],
+]
 mine = [[6, 3, 3, 3], [24, 15, 3, 3]]
 high_ground = [[12, 6, 3, 3], [21, 6, 3, 3]]
 illegal = [[0, 0, 3, 3], [3, 0, 3, 3]]
@@ -107,6 +113,7 @@ enemy_kind = "basic"
 count = 5
 interval_seconds = 1.5
 start_delay_seconds = 0.0
+entrance = 0
 ```
 
 Load a level explicitly and start a game from it:
@@ -125,6 +132,15 @@ the core footprint. Omit `road` to default to the route centerline; omit
 `interval_seconds` must be positive, and `start_delay_seconds` must be
 non-negative. `create_demo_map()` and `create_demo_waves()` still work and load
 the same demo document.
+
+`entrances` is optional. When omitted, the map has one implicit entrance at
+`route[0]`. When present, it must be nonempty, the first entrance must equal
+`route[0]`, and every entrance must be unique, walkable, reachable from the
+core, and outside mine sites. Each spawn group selects an entrance by its
+zero-based `entrance` index; omitting it uses `0`. Entrance cells are reserved
+and cannot be built on, so players cannot block a spawn point. `route` remains
+the primary path used for road validation and fallback geometry; enemies use a
+per-enemy path computed from their assigned entrance.
 
 ## Wave Lifecycle
 
@@ -240,9 +256,12 @@ wide line between waypoints. `GridMap.path` is an immutable `RoutePath` with
 world-space points at waypoint cell centers. The demo path length is 36 units,
 preserving the original travel time after scaling enemy speeds by three.
 Progress and arrival use physical path distance, independent of waypoint
-spacing; the legacy `GridMap.path` still provides spawn and fallback geometry.
-Runtime enemies now store a per-enemy `RoutePath` assigned by the pathfinding
-module, so `EnemySnapshot.path` is the authoritative route preview source.
+spacing; the legacy `GridMap.path` still provides fallback geometry.
+`GridMap.spawn_entrances` lists the spawn points used by waves. If `entrances`
+is omitted, it falls back to the primary route start. Runtime enemies spawn at
+their assigned entrance and store a per-enemy `RoutePath` assigned by the
+pathfinding module, so `EnemySnapshot.path` is the authoritative route preview
+source. Entrance cells are not buildable.
 
 Combat uses the building center and the enemy's continuous world position.
 The `world_distance()` function in `position.py` is the shared combat-distance
@@ -259,7 +278,7 @@ contract:
 
 - `GameSnapshot` provides required fields `cell_size` (currently `1.0` world
   unit) and `distance_metric` (`"manhattan"`). Map width/height are small-cell
-  counts.
+  counts. `GameSnapshot.entrances` lists the level's spawn points.
 - `BuildingSnapshot` provides required `width`, `height` and `center`. Draw and
   select the full footprint using its anchor, and deduplicate by ID when
   collecting buildings from board cells. Every covered cell exposes that
@@ -271,8 +290,9 @@ contract:
   indices. `EnemySnapshot.armor`, `attack_range`, and `attack_damage` expose
   combat details for inspection. `EnemySnapshot.path` contains the current
   per-enemy route, `EnemySnapshot.breach_target_id` names the building the
-  enemy plans to break, and `EnemySnapshot.target_building_id` names the
-  infrastructure target of a saboteur.
+  enemy plans to break, `EnemySnapshot.target_building_id` names the
+  infrastructure target of a saboteur, and `EnemySnapshot.entrance_index`
+  identifies the spawn point the enemy came from.
 - `BuildingSnapshot` also exposes `repair_cost`, `health_efficiency`,
   `effective_power_supply`, `splash_radius`, `splash_damage_ratio`, and
   `target_enemy_id` for repair quotes, condition output, combat previews, and
@@ -526,6 +546,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
 
 - TOML-driven level definitions for the fixed map, wave schedule, and starting
   resources.
+- Multiple declared enemy entrances with per-spawn-group entrance assignment;
+  entrance cells are reserved from construction.
 - 36 by 21 small-cell map with configurable rectangular building footprints.
 - Per-enemy open-ground pathfinding with buildings as blockers, automatic
   breach attacks, and four enemy types including flat armor.
