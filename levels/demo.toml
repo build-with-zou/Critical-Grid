@@ -1,0 +1,115 @@
+# Critical Grid demo level.
+#
+# Positions and rectangles use small-cell coordinates. A rectangle is
+# [x, y, width, height]; its cells cover x..x+width-1 and y..y+height-1.
+# Terrain categories must not overlap each other or the core footprint.
+
+name = "Frontier Demo"
+description = "Introductory frontier base with a fixed route."
+starting_gold = 180
+starting_core_hp = 30
+
+[map]
+width = 36
+height = 21
+core_position = [30, 3]
+core_footprint = [3, 3]
+route = [
+  [1, 13],
+  [4, 13],
+  [7, 13],
+  [10, 13],
+  [13, 13],
+  [16, 13],
+  [19, 13],
+  [22, 13],
+  [25, 13],
+  [28, 13],
+  [28, 10],
+  [28, 7],
+  [28, 4],
+]
+
+[map.terrain]
+road = [
+  [0, 12, 30, 3],
+  [27, 3, 3, 12],
+]
+mine = [
+  [6, 3, 3, 3],
+  [24, 15, 3, 3],
+]
+high_ground = [
+  [12, 6, 3, 3],
+  [21, 6, 3, 3],
+]
+illegal = [
+  [0, 0, 3, 3],
+  [3, 0, 3, 3],
+  [15, 0, 3, 3],
+  [18, 0, 3, 3],
+  [33, 6, 3, 3],
+  [33, 9, 3, 3],
+  [12, 18, 3, 3],
+  [15, 18, 3, 3],
+]
+walk_only = []
+build_only = []
+
+[[waves]]
+name = "Wave 1"
+briefing = "Basic enemies."
+
+[[waves.groups]]
+enemy_kind = "basic"
+count = 5
+interval_seconds = 1.5
+start_delay_seconds = 0.0
+
+[[waves]]
+name = "Wave 2"
+briefing = "Fast enemies mixed with basic enemies."
+
+[[waves.groups]]
+enemy_kind = "basic"
+count = 5
+interval_seconds = 1.2
+start_delay_seconds = 0.0
+
+[[waves.groups]]
+enemy_kind = "fast"
+count = 3
+interval_seconds = 1.8
+start_delay_seconds = 2.0
+
+[[waves]]
+name = "Wave 3"
+briefing = "Armored enemies test sustained damage."
+
+[[waves.groups]]
+enemy_kind = "basic"
+count = 4
+interval_seconds = 1.0
+start_delay_seconds = 0.0
+
+[[waves.groups]]
+enemy_kind = "armored"
+count = 3
+interval_seconds = 2.5
+start_delay_seconds = 1.0
+
+[[waves]]
+name = "Wave 4"
+briefing = "Saboteurs appear. Protect the grid."
+
+[[waves.groups]]
+enemy_kind = "fast"
+count = 4
+interval_seconds = 1.2
+start_delay_seconds = 0.0
+
+[[waves.groups]]
+enemy_kind = "saboteur"
+count = 3
+interval_seconds = 2.0
+start_delay_seconds = 1.5
