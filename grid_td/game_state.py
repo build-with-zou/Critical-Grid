@@ -141,6 +141,7 @@ class EnemySnapshot:
     path: tuple[WorldPosition, ...] = ()  # Current route points for preview.
     breach_target_id: int | None = None  # Building this enemy plans to breach.
     target_building_id: int | None = None  # Current active building attack target.
+    entrance_index: int = 0  # Spawn point index assigned when the enemy appears.
 
 
 @dataclass(frozen=True)
@@ -239,6 +240,7 @@ class GameSnapshot:
     board: tuple[tuple[CellSnapshot, ...], ...]
     cell_size: float  # One world unit per small cell.
     distance_metric: str
+    entrances: tuple[Position, ...] = ()  # Enemy spawn points for this level.
 
 
 BUILDING_KIND_BY_TYPE: tuple[tuple[type[Building], str], ...] = (
@@ -387,6 +389,7 @@ class GameState:
             board=self.board_snapshot(),
             cell_size=1.0,
             distance_metric=DISTANCE_METRIC,
+            entrances=self.grid_map.spawn_entrances,
         )
 
     def status_snapshot(self) -> GameStatus:
@@ -543,6 +546,7 @@ class GameState:
                     path=active_path.points,
                     breach_target_id=enemy.breach_target_id,
                     target_building_id=enemy.target_building_id,
+                    entrance_index=enemy.entrance_index,
                 )
             )
 
@@ -938,9 +942,10 @@ class GameState:
 
         Raises:
             ValueError: The game has ended, the core is destroyed, the phase
-                is not DAY, a runner already exists, or no waves remain.
-                Rejected calls leave all state unchanged. Only final settlement
-                grants victory.
+                is not DAY, a runner already exists, no waves remain, or a
+                spawn group references an invalid entrance. Rejected calls
+                leave all state unchanged. Only final settlement grants
+                victory.
         """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot start a wave after the game has ended.")
@@ -948,7 +953,19 @@ class GameState:
             raise ValueError("Settle the current wave before starting the next wave.")
         if self.wave_index >= len(self.waves):
             raise ValueError("No waves remain to start.")
-        self.wave_runner = WaveRunner(self.waves[self.wave_index])
+        wave = self.waves[self.wave_index]
+        entrance_count = len(self.grid_map.spawn_entrances)
+        for group in wave.groups:
+            if (
+                isinstance(group.entrance, bool)
+                or not isinstance(group.entrance, int)
+                or group.entrance < 0
+                or group.entrance >= entrance_count
+            ):
+                raise ValueError(
+                    f"Wave group entrance must be between 0 and {entrance_count - 1}."
+                )
+        self.wave_runner = WaveRunner(wave)
         self.phase = GamePhase.NIGHT
 
     def end_wave(self) -> str:
@@ -1069,6 +1086,9 @@ class GameState:
         if self.wave_runner is not None:
             for enemy in self.wave_runner.step(delta):
                 enemy.id = self._next_enemy_id()
+                entrance = self.grid_map.spawn_entrances[enemy.entrance_index]
+                enemy.route = RoutePath((entrance.center,))
+                enemy.path_progress = 0.0
                 self.enemies.append(enemy)
                 self._assign_enemy_path(enemy)
 
