@@ -83,42 +83,13 @@ class WaveRunner:
 
 
 def create_demo_waves() -> tuple[Wave, ...]:
-    """Create the four demo waves used by the entry script and tests.
+    """Load the demo wave schedule shared by the entry script and tests.
 
-    Wave parameters are current prototype balance data and should not be
-    implicitly changed by scheduling logic. Register new enemy types in
-    `grid_td.enemies.create_enemy()` first; after adding waves, also check
-    `GameState` victory conditions and demo runtime.
+    The level document at ``levels/demo.toml`` is the single source of truth.
+    This wrapper keeps the existing import path while the TOML loader owns
+    parsing and validation.
     """
-    return (
-        Wave(
-            name="Wave 1",
-            briefing="Basic enemies.",
-            groups=(SpawnGroup("basic", count=5, interval_seconds=1.5),),
-        ),
-        Wave(
-            name="Wave 2",
-            briefing="Fast enemies mixed with basic enemies.",
-            groups=(
-                SpawnGroup("basic", count=5, interval_seconds=1.2),
-                SpawnGroup("fast", count=3, interval_seconds=1.8, start_delay_seconds=2.0),
-            ),
-        ),
-        Wave(
-            name="Wave 3",
-            briefing="Armored enemies test sustained damage.",
-            groups=(
-                SpawnGroup("basic", count=4, interval_seconds=1.0),
-                SpawnGroup("armored", count=3, interval_seconds=2.5, start_delay_seconds=1.0),
-            ),
-        ),
-        Wave(
-            name="Wave 4",
-            briefing="Saboteurs appear. Protect the grid.",
-            groups=(
-                SpawnGroup("fast", count=4, interval_seconds=1.2),
-                SpawnGroup("saboteur", count=3, interval_seconds=2.0, start_delay_seconds=1.5),
-            ),
-        ),
-    )
+    from grid_td.levels import load_demo_level
+
+    return load_demo_level().waves
 

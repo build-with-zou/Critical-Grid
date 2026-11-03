@@ -16,12 +16,11 @@ mine-site type, gold, and dynamic pathing constraints are validated by
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cached_property
 
 from grid_td.path import RoutePath
-from grid_td.position import Footprint, LEGACY_TILE_SIZE, Position
+from grid_td.position import Footprint, Position
 
 
 @dataclass(frozen=True)
@@ -145,63 +144,13 @@ class GridMap:
 
 
 def create_demo_map() -> GridMap:
-    """Create the fixed demo map shared by the entry script and tests.
+    """Load the fixed demo map used by the entry script and tests.
 
-    Returns:
-        An immutable 36-column, 21-row map with a route that runs horizontally
-        and then turns upward, plus two mine sites and two high-ground cells.
-        Changing this also changes the spatial assumptions of the demo, tests,
-        and default waves, so check build coordinates and tower ranges too.
+    The level document at ``levels/demo.toml`` is the single source of truth.
+    This wrapper preserves the existing import path for callers while keeping
+    the TOML loader separate from the map rules module.
     """
-    route = (
-        Position(0, 4),
-        Position(1, 4),
-        Position(2, 4),
-        Position(3, 4),
-        Position(4, 4),
-        Position(5, 4),
-        Position(6, 4),
-        Position(7, 4),
-        Position(8, 4),
-        Position(9, 4),
-        Position(9, 3),
-        Position(9, 2),
-        Position(9, 1),
-    )
+    from grid_td.levels import load_demo_level
 
-    def expand(cells: Iterable[Position]) -> frozenset[Position]:
-        """Expand terrain area while keeping the original physical layout."""
-        tile = Footprint(LEGACY_TILE_SIZE, LEGACY_TILE_SIZE)
-        return frozenset(
-            cell
-            for old in cells
-            for cell in tile.cells(Position(old.x * LEGACY_TILE_SIZE, old.y * LEGACY_TILE_SIZE))
-        )
-
-    return GridMap(
-        width=12 * LEGACY_TILE_SIZE,
-        height=7 * LEGACY_TILE_SIZE,
-        # The middle small cell of each former tile preserves the original
-        # centerline. Sparse waypoints keep its length at 12 * 3 = 36 units.
-        route=tuple(
-            Position(p.x * LEGACY_TILE_SIZE + 1, p.y * LEGACY_TILE_SIZE + 1)
-            for p in route
-        ),
-        road_cells=expand(route),
-        core_position=Position(10 * LEGACY_TILE_SIZE, LEGACY_TILE_SIZE),
-        mine_positions=expand((Position(2, 1), Position(8, 5))),
-        high_ground_positions=expand((Position(4, 2), Position(7, 2))),
-        illegal_ground_positions=expand(
-            (
-                Position(0, 0),
-                Position(1, 0),
-                Position(5, 0),
-                Position(6, 0),
-                Position(11, 2),
-                Position(11, 3),
-                Position(4, 6),
-                Position(5, 6),
-            )
-        ),
-    )
+    return load_demo_level().grid_map
 
