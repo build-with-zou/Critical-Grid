@@ -90,7 +90,7 @@ class WorldGeometryTest(unittest.TestCase):
         grid_map = create_demo_map()
         self.assertEqual((grid_map.width, grid_map.height), (36, 21))
         self.assertEqual(grid_map.path.length, 36)
-        self.assertEqual(len(grid_map.route_cells), 13 * 9)
+        self.assertEqual(len(grid_map.route_cells), 165)
         self.assertTrue(all(grid_map.is_route(Position(7, y)) for y in (12, 13, 14)))
         self.assertFalse(grid_map.is_route(Position(7, 11)))
         self.assertTrue(grid_map.is_mine_site(Position(8, 5)))

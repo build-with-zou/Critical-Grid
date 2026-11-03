@@ -27,14 +27,15 @@ from grid_td.position import Footprint, Position
 class GridMap:
     """Describe one fixed map and its static terrain markers.
 
-    `route` stores ordered centerline cells, which need not be adjacent.
-    `road_cells` independently stores all cells of the wider road surface.
-    The final centerline point remains the core-adjacent arrival point.
+    `route` stores the primary ordered centerline from its entrance to the
+    core, which need not be adjacent. `entrances` optionally declares every
+    enemy spawn point; the first entry must match `route[0]`. `road_cells`
+    independently stores all cells of the wider road surface.
     """
 
     width: int  # Number of columns; valid x values are [0, width).
     height: int  # Number of rows; valid y values are [0, height).
-    route: tuple[Position, ...]  # Route cells ordered from entrance to core.
+    route: tuple[Position, ...]  # Primary route cells from entrance to core.
     core_position: Position  # Top-left anchor of the reserved core rectangle.
     mine_positions: frozenset[Position]  # Mine-only build cells.
     high_ground_positions: frozenset[Position]  # Cells that grant tower range.
@@ -43,6 +44,7 @@ class GridMap:
     core_footprint: Footprint = Footprint(3, 3)
     walk_only_positions: frozenset[Position] = frozenset()
     build_only_positions: frozenset[Position] = frozenset()
+    entrances: tuple[Position, ...] = ()  # Explicit enemy spawn points.
 
     def __post_init__(self) -> None:
         """Reject geometry that would place runtime entities outside the map."""
@@ -70,11 +72,28 @@ class GridMap:
             raise ValueError("Terrain capability cells must be inside the map.")
         if self.walk_only_positions & self.build_only_positions:
             raise ValueError("A cell cannot be walk-only and build-only.")
+        if self.entrances:
+            if len(set(self.entrances)) != len(self.entrances):
+                raise ValueError("Entrance positions must be unique.")
+            if self.entrances[0] != self.route[0]:
+                raise ValueError("The first entrance must match the route start.")
+            for entrance in self.entrances:
+                if not self.in_bounds(entrance) or not self.is_walkable(entrance):
+                    raise ValueError(
+                        "Entrances must be walkable cells inside the map."
+                    )
+                if self.is_mine_site(entrance):
+                    raise ValueError("Entrances cannot be placed on mine sites.")
 
     @cached_property
     def path(self) -> RoutePath:
         """Prepare physical route geometry once, separate from road terrain."""
         return RoutePath(tuple(position.center for position in self.route))
+
+    @property
+    def spawn_entrances(self) -> tuple[Position, ...]:
+        """Return declared spawn points, falling back to the primary route start."""
+        return self.entrances or (self.route[0],)
 
     @cached_property
     def centerline_cells(self) -> frozenset[Position]:
@@ -104,6 +123,10 @@ class GridMap:
         """Return whether a coordinate belongs to the fixed enemy route."""
         return position in self.route_cells
 
+    def is_entrance(self, position: Position) -> bool:
+        """Return whether a coordinate is an enemy spawn point."""
+        return position in self.spawn_entrances
+
     def is_mine_site(self, position: Position) -> bool:
         """Return whether a coordinate is a mine-only site."""
         return position in self.mine_positions
@@ -129,12 +152,15 @@ class GridMap:
         """Return whether static terrain permits constructing a building.
 
         Roads, high ground, mine sites and ordinary ground are buildable;
-        walk-only, illegal and core cells are not. Mine-site type and occupancy
-        restrictions remain the responsibility of `GameState.build()`.
+        walk-only, illegal, core and enemy entrance cells are not. Mine-site
+        type and occupancy restrictions remain the responsibility of
+        `GameState.build()`.
         """
         if not self.in_bounds(position):
             return False
         if self.is_core(position) or self.is_illegal(position):
+            return False
+        if self.is_entrance(position):
             return False
         return position not in self.walk_only_positions
 

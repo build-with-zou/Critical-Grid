@@ -61,8 +61,15 @@ class LevelLoadingTest(unittest.TestCase):
 
         self.assertEqual((grid_map.width, grid_map.height), (36, 21))
         self.assertEqual(grid_map.path.length, 36)
-        self.assertEqual(len(grid_map.route_cells), 13 * 9)
+        self.assertEqual(len(grid_map.route_cells), 165)
         self.assertTrue(grid_map.is_route(Position(7, 13)))
+        self.assertTrue(grid_map.is_route(Position(35, 16)))
+        self.assertEqual(
+            grid_map.spawn_entrances,
+            (Position(1, 13), Position(35, 16)),
+        )
+        self.assertFalse(grid_map.is_buildable(Position(1, 13)))
+        self.assertFalse(grid_map.is_buildable(Position(35, 16)))
         self.assertFalse(grid_map.is_route(Position(7, 11)))
         self.assertTrue(grid_map.is_mine_site(Position(8, 5)))
         self.assertTrue(grid_map.is_high_ground(Position(12, 6)))

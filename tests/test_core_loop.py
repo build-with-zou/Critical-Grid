@@ -154,7 +154,7 @@ class CoreLoopTest(unittest.TestCase):
     def test_building_on_road_is_allowed(self) -> None:
         game = GameState(create_demo_map())
 
-        building = game.build("gun_tower", Position(0, 12))
+        building = game.build("gun_tower", Position(4, 12))
 
         self.assertEqual(building.name, "Gun Tower")
 
@@ -208,8 +208,8 @@ class CoreLoopTest(unittest.TestCase):
         self.assertIsNone(illegal_cell.building)
         self.assertEqual(illegal_cell.display_symbol, "#")
 
-        game.build("power_plant", Position(30, 6))
-        building_cell = game.cell_snapshot(Position(30, 6))
+        game.build("power_plant", Position(33, 3))
+        building_cell = game.cell_snapshot(Position(33, 3))
 
         self.assertEqual(building_cell.terrain, "empty")
         self.assertFalse(building_cell.is_buildable)

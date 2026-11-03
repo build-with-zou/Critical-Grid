@@ -1,7 +1,8 @@
 """TOML-backed level definitions.
 
 A level bundles the fixed map, enemy wave schedule, and starting resources.
-The TOML file is the single source of truth for playable levels; the legacy
+Enemy spawn points are declared per map and selected by each spawn group. The
+TOML file is the single source of truth for playable levels; the legacy
 ``create_demo_map()`` and ``create_demo_waves()`` helpers load this module's
 demo file so existing callers keep working.
 
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from grid_td.enemies import create_enemy
 from grid_td.map import GridMap
+from grid_td.pathing import find_path
 from grid_td.position import Footprint, Position
 from grid_td.waves import SpawnGroup, Wave
 
@@ -30,7 +32,15 @@ _LEVEL_KEYS = frozenset(
     {"name", "description", "starting_gold", "starting_core_hp", "map", "waves"}
 )
 _MAP_KEYS = frozenset(
-    {"width", "height", "route", "core_position", "core_footprint", "terrain"}
+    {
+        "width",
+        "height",
+        "route",
+        "entrances",
+        "core_position",
+        "core_footprint",
+        "terrain",
+    }
 )
 _TERRAIN_KEYS = (
     "road",
@@ -42,7 +52,7 @@ _TERRAIN_KEYS = (
 )
 _WAVE_KEYS = frozenset({"name", "briefing", "groups"})
 _GROUP_KEYS = frozenset(
-    {"enemy_kind", "count", "interval_seconds", "start_delay_seconds"}
+    {"enemy_kind", "count", "interval_seconds", "start_delay_seconds", "entrance"}
 )
 
 
@@ -276,6 +286,20 @@ def _parse_map(value: object, path: Path) -> GridMap:
         for index, point in enumerate(route_value)
     )
 
+    entrances: tuple[Position, ...] = ()
+    if "entrances" in map_data:
+        entrance_value = map_data["entrances"]
+        if not isinstance(entrance_value, list) or not entrance_value:
+            raise _error(
+                path,
+                "map.entrances",
+                "must be a nonempty array of [x, y] points.",
+            )
+        entrances = tuple(
+            _parse_position(point, f"map.entrances[{index}]", path)
+            for index, point in enumerate(entrance_value)
+        )
+
     if "core_position" not in map_data:
         raise _error(path, "map.core_position", "is required.")
     core_position = _parse_position(map_data["core_position"], "map.core_position", path)
@@ -310,6 +334,7 @@ def _parse_map(value: object, path: Path) -> GridMap:
             core_footprint=core_footprint,
             walk_only_positions=terrain["walk_only"],
             build_only_positions=terrain["build_only"],
+            entrances=entrances,
         )
     except ValueError as exc:
         raise _error(path, "map", str(exc)) from exc
@@ -321,10 +346,29 @@ def _parse_map(value: object, path: Path) -> GridMap:
                 "map.route",
                 f"centerline cell ({cell.x}, {cell.y}) is not walkable.",
             )
+
+    for index, entrance in enumerate(grid_map.spawn_entrances):
+        context = (
+            f"map.entrances[{index}]" if entrances else "map.route[0]"
+        )
+        try:
+            plan = find_path(
+                grid_map,
+                [],
+                entrance,
+                enemy_speed=1.0,
+                breach_damage=1.0,
+            )
+        except ValueError as exc:
+            raise _error(path, context, str(exc)) from exc
+        if plan is None:
+            raise _error(path, context, "cannot reach the core.")
     return grid_map
 
 
-def _parse_waves(value: object, path: Path) -> tuple[Wave, ...]:
+def _parse_waves(
+    value: object, path: Path, entrance_count: int
+) -> tuple[Wave, ...]:
     if not isinstance(value, list) or not value:
         raise _error(path, "waves", "must be a nonempty array of wave tables.")
 
@@ -367,6 +411,19 @@ def _parse_waves(value: object, path: Path) -> tuple[Wave, ...]:
                     path, f"{group_context}.enemy_kind", str(exc)
                 ) from exc
 
+            entrance = _require_int(
+                group_data.get("entrance", 0),
+                f"{group_context}.entrance",
+                path,
+                minimum=0,
+            )
+            if entrance >= entrance_count:
+                raise _error(
+                    path,
+                    f"{group_context}.entrance",
+                    f"must be less than the entrance count ({entrance_count}).",
+                )
+
             groups.append(
                 SpawnGroup(
                     enemy_kind=enemy_kind,
@@ -385,6 +442,7 @@ def _parse_waves(value: object, path: Path) -> tuple[Wave, ...]:
                         path,
                         minimum=0.0,
                     ),
+                    entrance=entrance,
                 )
             )
         waves.append(Wave(name=name, briefing=briefing, groups=tuple(groups)))
@@ -408,7 +466,11 @@ def _parse_level(data: object, path: Path) -> LevelDefinition:
     grid_map = _parse_map(level_data["map"], path)
     if "waves" not in level_data:
         raise _error(path, "waves", "is required.")
-    waves = _parse_waves(level_data["waves"], path)
+    waves = _parse_waves(
+        level_data["waves"],
+        path,
+        len(grid_map.spawn_entrances),
+    )
     return LevelDefinition(
         name=name,
         description=description,

@@ -120,7 +120,12 @@ class ReplanAndBreachTest(unittest.TestCase):
 class TerrainBuildRuleTest(unittest.TestCase):
     def test_road_cells_are_buildable(self) -> None:
         game = GameState(
-            make_map(12, 12, Position(9, 7), route=(Position(1, 0),)),
+            make_map(
+                12,
+                12,
+                Position(9, 7),
+                route=(Position(0, 0), Position(2, 0)),
+            ),
             gold=1000,
         )
 
@@ -135,8 +140,8 @@ class TerrainBuildRuleTest(unittest.TestCase):
                 12,
                 12,
                 Position(9, 7),
-                route=(Position(1, 0),),
-                walk_only=frozenset({Position(2, 0)}),
+                route=(Position(0, 0), Position(2, 0)),
+                walk_only=frozenset({Position(1, 0)}),
             ),
             gold=1000,
         )
@@ -149,7 +154,7 @@ class TerrainBuildRuleTest(unittest.TestCase):
             12,
             12,
             Position(9, 7),
-            route=(Position(1, 0),),
+            route=(Position(0, 0), Position(2, 0)),
             build_only=frozenset({Position(1, 0)}),
         )
         game = GameState(grid_map, gold=1000)
