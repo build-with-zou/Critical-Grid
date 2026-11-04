@@ -129,6 +129,36 @@ class LevelLoadingTest(unittest.TestCase):
         self.assertEqual(level.starting_gold, 180)
         self.assertEqual(level.starting_core_hp, 30)
 
+    def test_intel_price_defaults_and_parses_custom_values(self) -> None:
+        self.assertEqual(load_level(self.write_level(MINIMAL_LEVEL)).intel_price, 8)
+
+        custom = MINIMAL_LEVEL.replace(
+            'starting_core_hp = 10\n',
+            'starting_core_hp = 10\nintel_price = 12\n',
+        )
+        self.assertEqual(load_level(self.write_level(custom)).intel_price, 12)
+
+    def test_invalid_intel_price_is_rejected(self) -> None:
+        negative = MINIMAL_LEVEL.replace(
+            'starting_core_hp = 10\n',
+            'starting_core_hp = 10\nintel_price = -1\n',
+        )
+        self.assert_invalid(negative, "intel_price")
+
+    def test_wave_threat_parses_and_invalid_values_are_rejected(self) -> None:
+        authored = MINIMAL_LEVEL.replace(
+            'briefing = "Basic test."\n',
+            'briefing = "Basic test."\nthreat = "high"\n',
+        )
+        level = load_level(self.write_level(authored))
+        self.assertEqual(level.waves[0].threat, "high")
+
+        invalid = MINIMAL_LEVEL.replace(
+            'briefing = "Basic test."\n',
+            'briefing = "Basic test."\nthreat = "extreme"\n',
+        )
+        self.assert_invalid(invalid, "threat")
+
     def test_legacy_helpers_load_the_demo_file(self) -> None:
         level = load_demo_level()
         self.assertEqual(create_demo_map(), level.grid_map)

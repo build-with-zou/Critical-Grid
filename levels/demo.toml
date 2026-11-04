@@ -8,6 +8,7 @@ name = "Frontier Demo"
 description = "Introductory frontier base with a fixed route."
 starting_gold = 180
 starting_core_hp = 30
+intel_price = 8
 
 [map]
 width = 36

@@ -19,6 +19,10 @@ from dataclasses import dataclass
 from grid_td.enemies import Enemy, create_enemy
 
 
+THREAT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high"})
+"""Allowed authored threat tiers; shared with level validation and intel."""
+
+
 @dataclass(frozen=True)
 class SpawnGroup:
     """Timed spawn configuration for one enemy type."""
@@ -35,8 +39,17 @@ class Wave:
     """Static configuration and player-facing briefing for one wave."""
 
     name: str  # Wave name shown in the status line.
-    briefing: str  # Description returned by purchased intel.
+    briefing: str  # Coarse description shown by free and detailed intel.
     groups: tuple[SpawnGroup, ...]  # Spawn groups advanced in parallel.
+    threat: str | None = None  # Optional low/medium/high override for intel.
+
+    def __post_init__(self) -> None:
+        """Reject authored threat values outside the shared enum."""
+        if self.threat is not None:
+            if not isinstance(self.threat, str) or self.threat not in THREAT_LEVELS:
+                raise ValueError(
+                    "Wave threat must be one of: low, medium, high."
+                )
 
 
 class WaveRunner:
