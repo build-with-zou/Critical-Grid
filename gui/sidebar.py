@@ -37,53 +37,53 @@ class Sidebar:
         for index, (kind, label, _, _) in enumerate(BUILD_KINDS):
             col, row = index % 2, index // 2
             button = UIButton(
-                pygame.Rect(PANEL_LEFT + 16 + col * 164, 170 + row * 40, 151, 36),
+                pygame.Rect(PANEL_LEFT + 16 + col * 164, 170 + row * 36, 151, 32),
                 label, manager,
             )
             self.build_buttons[button] = kind
 
         self.run_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 294, 151, 36), "Start Night", manager
+            pygame.Rect(PANEL_LEFT + 16, 282, 151, 32), "Start Night", manager
         )
         self.step_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 294, 151, 36), "Step +1s", manager,
+            pygame.Rect(PANEL_LEFT + 180, 282, 151, 32), "Step +1s", manager,
             tool_tip_text="Pause and advance one logical second, regardless of speed.",
         )
         self.cancel_build_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 334, 151, 36), "Cancel Action", manager
+            pygame.Rect(PANEL_LEFT + 16, 318, 151, 32), "Cancel Action", manager
         )
         self.sell_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 334, 151, 36), "Sell Building", manager,
+            pygame.Rect(PANEL_LEFT + 180, 318, 151, 32), "Sell Building", manager,
             tool_tip_text="Sell a non-core building for 70% of its cost. Shortcut: Delete.",
         )
         self.repair_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 374, 151, 36), "Repair HP", manager,
+            pygame.Rect(PANEL_LEFT + 16, 354, 151, 32), "Repair HP", manager,
             tool_tip_text="Restore full HP for 1 gold per missing HP. Shortcut: R.",
         )
         self.overload_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 374, 151, 36), "Overload (O)", manager,
+            pygame.Rect(PANEL_LEFT + 180, 354, 151, 32), "Overload (O)", manager,
             tool_tip_text="Overload a tower for 8 logical seconds; adds debt and a service fee.",
         )
         self.target_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 414, 151, 36), "Set Target (T)", manager,
+            pygame.Rect(PANEL_LEFT + 16, 390, 151, 32), "Set Target (T)", manager,
             tool_tip_text="Select a tower, then click Set Target and an enemy. Escape cancels.",
         )
         self.clear_target_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 414, 151, 36), "Clear Target", manager,
+            pygame.Rect(PANEL_LEFT + 180, 390, 151, 32), "Clear Target", manager,
             tool_tip_text="Remove the manual target and resume automatic selection.",
         )
         self.intel_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 454, 151, 36), "Wave Intel (8g)", manager,
+            pygame.Rect(PANEL_LEFT + 16, 426, 151, 32), "Wave Intel (8g)", manager,
             tool_tip_text="Spend 8 gold to reveal the current wave briefing.",
         )
         self.overdraft_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 180, 454, 151, 36), "Overdraft +40g", manager,
+            pygame.Rect(PANEL_LEFT + 180, 426, 151, 32), "Overdraft +40g", manager,
             tool_tip_text="Gain 40 gold and add 54 debt. Each use adds more debt.",
         )
         self.speed_buttons: dict[UIButton, float] = {}
         for index, multiplier in enumerate((0.5, 1.0, 2.0)):
             button = UIButton(
-                pygame.Rect(PANEL_LEFT + 16 + index * 108, 494, 99, 32),
+                pygame.Rect(PANEL_LEFT + 16 + index * 108, 462, 99, 32),
                 f"{multiplier:g}x", manager,
                 tool_tip_text=(
                     f"Speed {multiplier:g}x. Shortcut: {index + 1}. "
@@ -92,7 +92,7 @@ class Sidebar:
             )
             self.speed_buttons[button] = multiplier
         self.priority_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 534, 315, 32),
+            pygame.Rect(PANEL_LEFT + 16, 498, 315, 32),
             "Cycle Power Priority",
             manager,
             tool_tip_text="Cycle a mine or tower through High, Medium, and Low supply priority.",
@@ -122,6 +122,10 @@ class Sidebar:
             f"Repair HP ({building.repair_cost}g)" if building is not None else "Repair HP"
         )
         self.target_button.set_text("Click an Enemy..." if targeting else "Set Target (T)")
+        self.priority_button.set_text(
+            f"Power Priority: {building.power_priority.value.title()} (Click to Cycle)"
+            if priority_changeable else "Cycle Power Priority"
+        )
         for button, enabled in (
             (self.sell_button, active and sellable),
             (self.repair_button, active and repairable),
@@ -163,9 +167,9 @@ class Sidebar:
         selected_enemy: EnemySnapshot | None = None,
         targeting: bool = False,
     ) -> None:
-        """Show selection mode, health, and separate electrical and condition output."""
+        """Keep selected details below the action rows, including power priority."""
         pygame.draw.rect(
-            self.screen, PANEL, pygame.Rect(PANEL_LEFT, 132, 347, 600), border_radius=7
+            self.screen, PANEL, pygame.Rect(PANEL_LEFT, 132, 347, 606), border_radius=7
         )
         self._text("BUILD", PANEL_LEFT + 16, 143, (232, 239, 244), self.heading_font)
         mode = (
@@ -175,7 +179,7 @@ class Sidebar:
             else f"BUILD MODE: {selected_kind.replace('_', ' ').upper()}"
         )
         self._text(
-            mode, PANEL_LEFT + 16, 530,
+            mode, PANEL_LEFT + 16, 539,
             (111, 214, 228) if selected_kind is None else (245, 225, 164),
         )
         building = (
@@ -194,13 +198,13 @@ class Sidebar:
                     else LIMITED_COLOR if building.efficiency < 1
                     else CHARGED_COLOR
                 )
-            self._text(line, PANEL_LEFT + 16, 552 + index * 19, color)
+            self._text(line, PANEL_LEFT + 16, 563 + index * 17, color)
 
     @staticmethod
     def inspection_lines(
         snapshot: GameSnapshot, position: Position | None
     ) -> tuple[str, ...]:
-        """Describe snapshot condition and rated supply without inventing actual supply."""
+        """Show the core's allocated power, transmission quality and actual supply."""
         if position is None:
             return (
                 "Click a cell to inspect terrain.",
@@ -213,35 +217,48 @@ class Sidebar:
         coordinate = f"({position.x}, {position.y})"
         if building is not None:
             grid = "CONNECTED" if building.connected_to_grid else "OFF GRID"
+            if building.power_draw:
+                grid += f"  Priority {building.power_priority.value.upper()}"
+            source = f"#{building.power_source_id}" if building.power_source_id is not None else "None"
             lines = (
                 f"{building.name} #{building.id}  {coordinate}",
                 f"HP {building.hp}/{building.max_hp}  Full repair: {building.repair_cost}g",
-                f"Grid: {grid}  Priority {building.power_priority.value.upper()}",
+                f"Grid: {grid}",
                 f"Power eff. {building.power_efficiency:.0%}  Health eff. {building.health_efficiency:.0%}",
-                f"Final eff. {building.efficiency:.0%}  Rated supply {building.power_supply}  Demand {building.power_draw}",
+                f"Transmission {building.transmission_efficiency:.0%}  Final eff. {building.efficiency:.0%}",
+                f"Direct source: {source}  Demand {building.power_draw}",
             )
+            if building.power_supply:
+                actual_supply = building.effective_power_supply if building.connected_to_grid else 0
+                lines += (f"Actual supply {actual_supply}  Rated supply {building.power_supply}",)
             if building.range is not None:
+                range_line = f"Range {building.range:g}  Base damage {building.damage:g}"
+                if building.splash_radius is not None and building.splash_damage_ratio is not None:
+                    range_line += f"  Splash {building.splash_radius:g} ({building.splash_damage_ratio:.0%})"
                 lines += (
-                    f"Range {building.range:g}  Base damage {building.damage:g}",
+                    range_line,
                     f"Ready {building.cooldown_remaining:.1f}s  Overload: "
                     f"{'ON' if building.is_overloaded else 'OFF'}",
                     f"Manual target: #{building.target_enemy_id}" if building.target_enemy_id is not None
                     else "Manual target: Auto",
                 )
-            else:
-                lines += ("Rated supply excludes damage losses.",)
             return lines + (
                 "Overload service: due at settlement" if building.needs_repair
                 else "Overload service: none due",
             )
 
+        if position in snapshot.entrances:
+            index = snapshot.entrances.index(position) + 1
+            return (f"{coordinate}  Entrance E{index}", "Enemy spawn point", "Construction prohibited.")
+
+        ground_note = "Standard building terrain." if cell.is_buildable else "Construction prohibited."
         terrain, note = {
-            "route": ("Route", "Enemy road; no construction."),
+            "route": ("Road", "Buildings can redirect enemy paths."),
             "mine_site": ("Mine site", "Only a full mine can fit here."),
             "high_ground": ("High ground", "Full tower footprint gains range."),
             "illegal": ("Blocked", "Construction prohibited."),
             "core": ("Core", "Reserved for the base core."),
-        }.get(cell.terrain, ("Ground", "Standard building terrain."))
+        }.get(cell.terrain, ("Ground", ground_note))
         return (
             f"{coordinate}  Terrain: {terrain}",
             f"Cell buildable: {'Yes' if cell.is_buildable else 'No'}",
@@ -250,21 +267,25 @@ class Sidebar:
 
     @staticmethod
     def enemy_inspection_lines(enemy: EnemySnapshot) -> tuple[str, ...]:
-        """Describe a moving enemy by ID; speed is the base value before slowing."""
-        return (
-            f"{enemy.name} #{enemy.id}",
+        """Identify the spawn entrance and distinguish attack and breach targets."""
+        lines = (
+            f"{enemy.name} #{enemy.id}  Entrance E{enemy.entrance_index + 1}",
             f"HP {enemy.hp:g}/{enemy.max_hp:g}  Armor {enemy.armor}",
             f"Base speed {enemy.speed:g} world units/s",
             f"Slowed: {'YES' if enemy.is_slowed else 'NO'}",
             f"Kill reward {enemy.reward}g  Core damage {enemy.damage_to_core}",
             f"Route progress {enemy.path_progress:.1f} world units",
-            f"World ({enemy.world_position.x:.1f}, {enemy.world_position.y:.1f})",
             (
                 f"Building target: #{enemy.target_building_id}"
                 if enemy.target_building_id is not None
                 else "Building target: None"
             ),
         )
+        if enemy.breach_target_id is not None:
+            lines += (f"Breach target: #{enemy.breach_target_id}",)
+        if enemy.attack_damage > 0:
+            lines += (f"Building damage {enemy.attack_damage}  Range {enemy.attack_range:g}",)
+        return lines
 
     def _text(
         self, value: str, x: int, y: int, color: tuple[int, int, int],

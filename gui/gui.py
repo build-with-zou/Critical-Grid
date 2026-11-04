@@ -21,7 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from grid_td.buildings import PowerPriority
 from grid_td.game_state import BuildingSnapshot, EnemySnapshot, GamePhase, GameSnapshot, GameState
-from grid_td.map import create_demo_map
+from grid_td.levels import load_demo_level
 from grid_td.position import Position
 from gui.board_view import BoardView
 from gui.hud import HUD
@@ -39,6 +39,7 @@ class CriticalGridGUI:
 
     def __init__(self) -> None:
         """Initialize snapshot-driven views and independent selection and time controls."""
+        level = load_demo_level()
         pygame.init()
         pygame.display.set_caption("Critical Grid")
         self.screen = pygame.display.set_mode(WINDOW_SIZE)
@@ -48,11 +49,11 @@ class CriticalGridGUI:
         self.small_font = pygame.font.SysFont("arial", 17)
         self.title_font = pygame.font.SysFont("arial", 30, bold=True)
 
-        self.game = GameState(create_demo_map())
+        self.game = GameState.from_level(level)
         self.board = BoardView(self.screen, self.font)
         self.sidebar = Sidebar(self.screen, self.manager, self.small_font, self.font)
         self.hud = HUD(self.screen, self.font, self.small_font, self.title_font)
-        self.menu = MenuView(self.screen)
+        self.menu = MenuView(self.screen, level)
         self.view = "start"
         self.running = False
         self.selected_kind: str | None = None

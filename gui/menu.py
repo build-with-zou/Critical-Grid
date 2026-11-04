@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pygame
 
+from grid_td.levels import LevelDefinition
 from gui.styles import BACKGROUND, MUTED, TEXT, WINDOW_SIZE
 
 
@@ -16,8 +17,10 @@ BORDER = (64, 87, 98)
 class MenuView:
     """Draw the pre-game screens and map their buttons to navigation actions."""
 
-    def __init__(self, screen: pygame.Surface) -> None:
+    def __init__(self, screen: pygame.Surface, level: LevelDefinition) -> None:
+        """Use the same validated level definition that starts the game."""
         self.screen = screen
+        self.level = level
         font_path = next(
             (
                 path
@@ -102,7 +105,7 @@ class MenuView:
         self._text("OBJECTIVE: PROTECT THE CORE", (572, 494), self.small_font, GOLD)
 
     def _draw_levels(self, mouse_pos: tuple[int, int]) -> None:
-        """Present the single fixed map currently available in the core."""
+        """Present the bundled level with its actual map and starting resources."""
         self._text("SELECT LEVEL", (92, 125), self.heading_font, TEXT)
         self._text("Choose a frontier base and begin deployment.", (94, 175), self.small_font, MUTED)
 
@@ -111,10 +114,18 @@ class MenuView:
         pygame.draw.rect(self.screen, BORDER, card, width=1, border_radius=12)
         pygame.draw.rect(self.screen, ACCENT, pygame.Rect(92, 224, 5, 294), border_radius=2)
         self._text("01", (123, 255), self.title_font, ACCENT)
-        self._text("FRONTIER DEMO", (237, 264), self.heading_font, TEXT)
-        self._text("UNLOCKED  /  FIXED MAP", (240, 316), self.small_font, GOLD)
+        self._text(self.level.name.upper(), (237, 264), self.heading_font, TEXT)
+        self._text("UNLOCKED  /  DYNAMIC ENEMY PATHS", (240, 316), self.small_font, GOLD)
         pygame.draw.line(self.screen, BORDER, (237, 356), (944, 356), 1)
-        self._text("36 × 21 cells    Fixed route    Power grid & towers", (240, 382), self.body_font, MUTED)
+        grid = self.level.grid_map
+        self._text(
+            f"{grid.width} × {grid.height} cells    {len(grid.spawn_entrances)} entrances"
+            f"    {len(self.level.waves)} waves", (240, 382), self.body_font, MUTED,
+        )
+        self._text(
+            f"Starting gold {self.level.starting_gold}    Core HP {self.level.starting_core_hp}",
+            (240, 426), self.small_font, MUTED,
+        )
         self._button(self.buttons["levels"]["play"], "START LEVEL   →", mouse_pos)
         self._button(self.buttons["levels"]["back"], "←  BACK", mouse_pos, secondary=True)
 

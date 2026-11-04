@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 # These tests exercise real widgets and rendering without opening a desktop window.
@@ -12,14 +13,15 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
-from grid_td.buildings import GunTower, PowerPlant, PowerPriority
+from grid_td.buildings import GunTower, PowerNode, PowerPlant, PowerPriority
 from grid_td.enemies import create_enemy
 from grid_td.game_state import GamePhase, GameState
+from grid_td.levels import load_demo_level
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.gui import CriticalGridGUI
 from gui.sidebar import Sidebar
-from gui.styles import BOARD_LEFT, BOARD_TOP, CELL
+from gui.styles import BOARD_LEFT, BOARD_TOP, CELL, LIMITED_COLOR
 
 
 class BuildingInteractionTest(unittest.TestCase):
@@ -129,6 +131,46 @@ class BuildingInteractionTest(unittest.TestCase):
         self.gui._handle_button(self.gui.sidebar.priority_button)
         self.assertEqual(tower.power_priority, PowerPriority.MEDIUM)
         self.assertIn("MEDIUM", self.gui.message)
+
+    def test_priority_control_does_not_cover_selected_tower_details(self) -> None:
+        tower = self.gui.game.build("cannon_tower", Position(30, 6))
+        snapshot = self.gui.game.snapshot()
+        sidebar = self.gui.sidebar
+        with patch.object(sidebar, "_text", wraps=sidebar._text) as draw_text:
+            sidebar.draw(snapshot, None, tower.position)
+        details = [call.args for call in draw_text.call_args_list if call.args[0] != "BUILD"]
+        for label, x, y, _ in details:
+            text_rect = pygame.Rect((x, y), sidebar.font.size(label))
+            self.assertFalse(text_rect.colliderect(sidebar.priority_button.get_abs_rect()), label)
+            self.assertLessEqual(text_rect.bottom, 738, label)
+            self.assertLessEqual(text_rect.width, 315, label)
+
+    def test_selected_consumer_shows_attenuated_link_and_direct_source(self) -> None:
+        node = PowerNode(50, Position(30, 9))
+        node.take_damage(node.max_hp // 2)
+        self.gui.game = GameState(create_demo_map(), buildings=[node])
+        tower = self.gui.game.build("gun_tower", Position(30, 15))
+        snapshot = self.gui.game.snapshot()
+        building = snapshot.board[15][30].building
+        self.assertEqual(building.power_source_id, node.id)
+        self.assertLess(building.transmission_efficiency, 1.0)
+        self.gui.board.draw(snapshot, tower.id, tower.position, None, None)
+        middle = (BOARD_LEFT + round(31.5 * CELL), BOARD_TOP + round(13.5 * CELL))
+        self.assertEqual(tuple(self.gui.screen.get_at(middle))[:3], LIMITED_COLOR)
+        self.assertIn(f"Direct source: #{node.id}  Demand {tower.power_draw}",
+                      Sidebar.inspection_lines(snapshot, tower.position))
+
+    def test_menu_and_game_use_the_same_level_definition(self) -> None:
+        level = replace(load_demo_level(), name="Test Frontier", starting_gold=245, starting_core_hp=36)
+        with patch("gui.gui.load_demo_level", return_value=level):
+            gui = CriticalGridGUI()
+        snapshot = gui.game.snapshot()
+        self.assertEqual((snapshot.status.gold, snapshot.status.core_hp), (245, 36))
+        self.assertEqual(snapshot.entrances, level.grid_map.spawn_entrances)
+        self.assertIn("Entrance E2", Sidebar.inspection_lines(snapshot, snapshot.entrances[1])[0])
+        with patch.object(gui.menu, "_text", wraps=gui.menu._text) as draw_text:
+            gui.menu.draw("levels", (0, 0))
+        self.assertIn("TEST FRONTIER", [call.args[0] for call in draw_text.call_args_list])
 
     def test_rejected_sale_displays_reason_without_dropping_selection(self) -> None:
         self.gui.game.build("power_node", Position(30, 9))
