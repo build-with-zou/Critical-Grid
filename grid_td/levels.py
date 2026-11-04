@@ -23,13 +23,21 @@ from grid_td.enemies import create_enemy
 from grid_td.map import GridMap
 from grid_td.pathing import find_path
 from grid_td.position import Footprint, Position
-from grid_td.waves import SpawnGroup, Wave
+from grid_td.waves import THREAT_LEVELS, SpawnGroup, Wave
 
 LEVELS_DIRECTORY = Path(__file__).resolve().parent.parent / "levels"
 DEMO_LEVEL_PATH = LEVELS_DIRECTORY / "demo.toml"
 
 _LEVEL_KEYS = frozenset(
-    {"name", "description", "starting_gold", "starting_core_hp", "map", "waves"}
+    {
+        "name",
+        "description",
+        "starting_gold",
+        "starting_core_hp",
+        "intel_price",
+        "map",
+        "waves",
+    }
 )
 _MAP_KEYS = frozenset(
     {
@@ -50,7 +58,7 @@ _TERRAIN_KEYS = (
     "walk_only",
     "build_only",
 )
-_WAVE_KEYS = frozenset({"name", "briefing", "groups"})
+_WAVE_KEYS = frozenset({"name", "briefing", "threat", "groups"})
 _GROUP_KEYS = frozenset(
     {"enemy_kind", "count", "interval_seconds", "start_delay_seconds", "entrance"}
 )
@@ -66,6 +74,7 @@ class LevelDefinition:
     waves: tuple[Wave, ...]
     starting_gold: int
     starting_core_hp: int
+    intel_price: int = 8  # Gold charged once per wave for detailed intel.
 
     def __post_init__(self) -> None:
         """Reject manually constructed levels that bypass loader validation."""
@@ -91,6 +100,12 @@ class LevelDefinition:
             or self.starting_core_hp <= 0
         ):
             raise ValueError("Level starting_core_hp must be a positive integer.")
+        if (
+            isinstance(self.intel_price, bool)
+            or not isinstance(self.intel_price, int)
+            or self.intel_price < 0
+        ):
+            raise ValueError("Level intel_price must be a non-negative integer.")
 
 
 def load_level(path: str | Path) -> LevelDefinition:
@@ -388,6 +403,17 @@ def _parse_waves(
         briefing = _require_string(
             wave_data.get("briefing", ""), f"{context}.briefing", path
         )
+        threat = None
+        if "threat" in wave_data:
+            threat = _require_string(
+                wave_data["threat"], f"{context}.threat", path, nonempty=True
+            )
+            if threat not in THREAT_LEVELS:
+                raise _error(
+                    path,
+                    f"{context}.threat",
+                    "must be one of: low, medium, high.",
+                )
 
         groups_value = wave_data.get("groups")
         if not isinstance(groups_value, list) or not groups_value:
@@ -445,7 +471,14 @@ def _parse_waves(
                     entrance=entrance,
                 )
             )
-        waves.append(Wave(name=name, briefing=briefing, groups=tuple(groups)))
+        waves.append(
+            Wave(
+                name=name,
+                briefing=briefing,
+                groups=tuple(groups),
+                threat=threat,
+            )
+        )
     return tuple(waves)
 
 
@@ -460,6 +493,9 @@ def _parse_level(data: object, path: Path) -> LevelDefinition:
     )
     starting_core_hp = _require_int(
         level_data.get("starting_core_hp"), "starting_core_hp", path, minimum=1
+    )
+    intel_price = _require_int(
+        level_data.get("intel_price", 8), "intel_price", path, minimum=0
     )
     if "map" not in level_data:
         raise _error(path, "map", "is required.")
@@ -478,4 +514,5 @@ def _parse_level(data: object, path: Path) -> LevelDefinition:
         waves=waves,
         starting_gold=starting_gold,
         starting_core_hp=starting_core_hp,
+        intel_price=intel_price,
     )
