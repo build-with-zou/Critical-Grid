@@ -76,11 +76,14 @@ A level document is a TOML file under `levels/`. It owns the fixed map, the
 wave schedule, and the starting resources. The loader rejects unknown fields,
 malformed values, unknown enemy kinds, out-of-bounds terrain, overlapping
 terrain categories, and routes whose centerline is not walkable.
+`intel_price` must be a non-negative integer, and an authored wave `threat`
+must be `low`, `medium`, or `high`.
 
 ```toml
 name = "Example Level"
 starting_gold = 180
 starting_core_hp = 30
+intel_price = 8  # Optional detailed-intel cost; defaults to 8.
 
 [map]
 width = 36
@@ -107,6 +110,7 @@ build_only = []
 [[waves]]
 name = "Wave 1"
 briefing = "Basic enemies."
+# threat = "low"  # Optional low/medium/high override; omitted means derived.
 
 [[waves.groups]]
 enemy_kind = "basic"
@@ -141,6 +145,44 @@ zero-based `entrance` index; omitting it uses `0`. Entrance cells are reserved
 and cannot be built on, so players cannot block a spawn point. `route` remains
 the primary path used for road validation and fallback geometry; enemies use a
 per-enemy path computed from their assigned entrance.
+
+## Wave Intel
+
+Wave intel is derived from the level's existing wave schedule, so authors do
+not repeat counts, order, entrances, or timing in TOML. The core exposes two
+tiers:
+
+- **Free intel** is always available through `snapshot().status.free_intel` or
+  `game.wave_intel()`. It reports enemy kinds and names, derived traits such as
+  `fast`, `armored`, `grid_saboteur`, and `mixed`, the threat tier, the spawn
+  entrances in use, and the wave briefing. It never includes exact counts,
+  timing, or route geometry.
+- **Detailed intel** unlocks for one wave after `buy_wave_intel()` succeeds. It
+  adds total enemy count, per-group counts and entrance assignments, a sorted
+  spawn timeline, exact spawn windows, the primary route, and an approximate
+  duration. Read it through `game.detailed_wave_intel()` or
+  `snapshot().status.detailed_intel`.
+
+`buy_wave_intel()` keeps its existing `str` return value and GUI/text contract:
+it returns the wave `briefing`. Unlocks are permanent per wave, so purchasing
+the same wave again returns the briefing without charging gold. The price comes
+from the level's optional `intel_price` field (default `8`);
+`snapshot().status.intel_price` lets frontends label the button dynamically.
+
+Threat tiers are `low`, `medium`, and `high`. When a wave omits the optional
+TOML `threat`, the core derives one from total count plus weighted armored and
+grid-saboteur counts. The estimated duration uses the primary route length and
+base enemy speed; it ignores towers, slowing, and live re-pathing, so treat it
+as a planning hint.
+
+```python
+status = game.snapshot().status
+preview = status.free_intel          # Always present while a wave remains.
+detail = status.detailed_intel       # None until this wave is purchased.
+
+game.buy_wave_intel()                # Charges intel_price once for this wave.
+detail = game.detailed_wave_intel()  # Structured counts, order, and timing.
+```
 
 ## Wave Lifecycle
 
@@ -484,6 +526,7 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 ├── grid_td/
 │   ├── __init__.py         # Package entry
 │   ├── levels.py           # TOML level loading and validation
+│   ├── intel.py            # Derived free and detailed wave intel
 │   ├── position.py         # Cells, world positions, footprints and distance policy
 │   ├── path.py             # Distance-based fixed-route sampling
 │   ├── pathing.py          # Per-enemy open-ground and breach pathfinding
@@ -560,7 +603,8 @@ GUI interaction tests use the environment with the GUI dependencies installed:
   in-range target switching.
 - DAY/NIGHT lifecycle with explicit Start Night and wave settlement.
 - Wave spawning, mine income, debt interest, kill rewards, and overload fees.
-- Core overdraft, tower overload, wave intel, building repair, and selling.
+- Free coarse wave intel plus once-per-wave detailed intel, core overdraft,
+  tower overload, building repair, and selling.
 - Manual tower targeting through stable enemy IDs.
 - Building health, condition efficiency, and instant gold-funded repairs,
   including grid recovery.
@@ -578,7 +622,6 @@ work is:
 - Combat completion: enemy attacks on more building types.
 - Eight-night progression and balance.
 - Additional level documents and GUI level selection.
-- Per-building power priority and richer wave intel.
 - GUI visualization for attack events, power-source topology, and route
   previews.
 
