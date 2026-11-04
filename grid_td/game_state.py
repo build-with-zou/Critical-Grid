@@ -45,6 +45,7 @@ from grid_td.buildings import (
     create_building,
 )
 from grid_td.enemies import Enemy
+from grid_td.intel import WaveIntel, build_wave_intel, preview_wave_intel
 from grid_td.map import GridMap
 from grid_td.path import RoutePath
 from grid_td.pathing import cells_within_range, find_path
@@ -228,6 +229,9 @@ class GameStatus:
     result_message: str
     power: PowerSnapshot
     phase: GamePhase  # DAY planning, NIGHT combat, or a terminal result.
+    free_intel: WaveIntel | None = None  # Coarse current-wave intel, always free.
+    detailed_intel: WaveIntel | None = None  # Purchased detailed intel, if unlocked.
+    intel_price: int = 8  # Current detailed-intel price for GUI labels.
 
 
 @dataclass(frozen=True)
@@ -262,6 +266,7 @@ class GameState:
     SELL_REFUND_RATIO: ClassVar[float] = 0.7
 
     grid_map: GridMap
+    intel_price: int = 8  # Detailed-intel price, normally set from the level.
     gold: int = 180  # Current spendable gold; build, intel, and settlement change it.
     debt: int = 0  # Debt from overdraft/overload; interest is charged at wave end.
     elapsed_seconds: float = 0.0  # Authoritative logical clock, measured in seconds.
@@ -280,13 +285,21 @@ class GameState:
         buildings: list[Building] | None = None,
         enemies: list[Enemy] | None = None,
         waves: tuple[Wave, ...] | None = None,
+        intel_price: int = 8,
     ) -> None:
         """Keep the existing constructor while storing core HP on the core.
 
         A custom initializer lets core_hp remain a compatibility property
         rather than a second mutable health counter. Callers may inject a
         level-specific wave tuple; omitting it keeps the demo schedule.
+        ``intel_price`` is the once-per-wave detailed intel cost.
         """
+        if (
+            isinstance(intel_price, bool)
+            or not isinstance(intel_price, int)
+            or intel_price < 0
+        ):
+            raise ValueError("Intel price must be a non-negative integer.")
         self.grid_map = grid_map
         self.gold = gold
         self.debt = debt
@@ -294,6 +307,7 @@ class GameState:
         self.buildings = buildings if buildings is not None else []
         self.enemies = enemies if enemies is not None else []
         self.waves = waves if waves is not None else create_demo_waves()
+        self.intel_price = intel_price
         self.phase = GamePhase.DAY
         self.__post_init__(core_hp)
 
@@ -313,6 +327,12 @@ class GameState:
         self.next_enemy_id = 1
         self.result_message = ""
         self.latest_power_report = PowerReport(0, 0, 0, 1.0)
+        # Intel is static per wave; cache it lazily and rebuild if callers
+        # replace the public `waves` tuple (existing tests do this).
+        self._unlocked_intel_waves: set[int] = set()
+        self._intel_cache_source: tuple[Wave, ...] | None = None
+        self._wave_intel_full: tuple[WaveIntel, ...] = ()
+        self._wave_intel_preview: tuple[WaveIntel, ...] = ()
         core = Core(self._next_id(), self.grid_map.core_position)
         self._core = core
         # Custom starting health may exceed the default in scenarios/tests.
@@ -331,6 +351,7 @@ class GameState:
             gold=level.starting_gold,
             core_hp=level.starting_core_hp,
             waves=level.waves,
+            intel_price=level.intel_price,
         )
 
     @property
@@ -375,6 +396,56 @@ class GameState:
             return "No more waves"
         return self.waves[self.wave_index].name
 
+    def _ensure_intel_cache(self) -> None:
+        """Rebuild derived intel when the public wave tuple changes.
+
+        Waves are static during normal play, but tests and scenarios may
+        replace ``game.waves`` directly. Identity invalidation keeps cached
+        intel consistent without exposing mutation of private state.
+        """
+        if self._intel_cache_source is self.waves:
+            return
+        full = tuple(
+            build_wave_intel(
+                wave,
+                index,
+                self.grid_map.spawn_entrances,
+                self.grid_map.path.points,
+                self.grid_map.path.length,
+            )
+            for index, wave in enumerate(self.waves)
+        )
+        self._wave_intel_full = full
+        self._wave_intel_preview = tuple(
+            preview_wave_intel(intel) for intel in full
+        )
+        self._intel_cache_source = self.waves
+
+    def wave_intel(self) -> WaveIntel | None:
+        """Return free coarse intel for the current wave, if one exists.
+
+        Free intel never spends gold and never exposes detailed counts,
+        timing, or route geometry. It is safe for presentation to read every
+        frame.
+        """
+        self._ensure_intel_cache()
+        if self.wave_index >= len(self._wave_intel_preview):
+            return None
+        return self._wave_intel_preview[self.wave_index]
+
+    def detailed_wave_intel(self) -> WaveIntel | None:
+        """Return purchased detailed intel, or None before the wave unlock.
+
+        Unlocks are permanent per wave and are charged by buy_wave_intel().
+        Indices already unlocked are never charged again.
+        """
+        self._ensure_intel_cache()
+        if self.wave_index not in self._unlocked_intel_waves:
+            return None
+        if self.wave_index >= len(self._wave_intel_full):
+            return None
+        return self._wave_intel_full[self.wave_index]
+
     def snapshot(self) -> GameSnapshot:
         """Return the single read-only data source for presentation layers.
 
@@ -406,6 +477,9 @@ class GameState:
             is_finished=self.is_finished,
             result_message=self.result_message,
             phase=self.phase,
+            free_intel=self.wave_intel(),
+            detailed_intel=self.detailed_wave_intel(),
+            intel_price=self.intel_price,
             power=PowerSnapshot(
                 connected_count=report.connected_count,
                 total_supply=report.total_supply,
@@ -768,7 +842,11 @@ class GameState:
         return refund
 
     def buy_wave_intel(self) -> str:
-        """Spend 8 gold and return the current wave briefing.
+        """Unlock detailed intel for the current wave and return its briefing.
+
+        The string return preserves the existing GUI/text contract. Structured
+        details become available through ``detailed_wave_intel()`` and
+        ``snapshot().status.detailed_intel`` after the first successful call.
 
         Returns:
             The current wave's `briefing`; returns `"No incoming wave."` when
@@ -776,12 +854,14 @@ class GameState:
 
         Raises:
             ValueError: The game has ended, the core is destroyed, or current
-                gold is below the intel price. Rejected calls leave state
+                gold is below ``intel_price``. Rejected calls leave state
                 unchanged.
 
         Note:
-            When no waves remain in a non-terminal state, this returns
-            `"No incoming wave."` without charging the intel price.
+            Unlocks are permanent per wave. Calling this again for the same
+            wave returns the briefing without charging gold. When no waves
+            remain in a non-terminal state, it returns ``"No incoming wave."``
+            without charging.
         """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot buy intel after the game has ended.")
@@ -789,11 +869,15 @@ class GameState:
         if self.wave_index >= len(self.waves):
             return "No incoming wave."
 
-        cost = 8
-        if self.gold < cost:
+        briefing = self.waves[self.wave_index].briefing
+        if self.wave_index in self._unlocked_intel_waves:
+            return briefing
+
+        if self.gold < self.intel_price:
             raise ValueError("Not enough gold to buy intel.")
-        self.gold -= cost
-        return self.waves[self.wave_index].briefing
+        self.gold -= self.intel_price
+        self._unlocked_intel_waves.add(self.wave_index)
+        return briefing
 
     def core_overdraft(self, gold_amount: int = 40) -> None:
         """Immediately add gold while increasing debt by 1.35x.
