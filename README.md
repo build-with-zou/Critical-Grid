@@ -59,16 +59,19 @@ Recommended reading order:
 1. `main.py` for the runnable scenario.
 2. `grid_td/levels.py` and `levels/demo.toml` for the level document and loader.
 3. `grid_td/game_state.py` for orchestration and state transitions.
-4. `GameState.snapshot()` and its snapshot dataclasses for the GUI/text read
-   contract.
-5. `grid_td/buildings.py`, `grid_td/enemies.py`, and `grid_td/waves.py` for
+4. `grid_td/snapshots.py` and `grid_td/snapshot_builder.py` for the GUI/text
+   read contract and its static-map caching.
+5. `grid_td/combat.py` and `grid_td/enemy_control.py` for targeting, attacks,
+   and enemy path assignment.
+6. `grid_td/economy.py` for wave-settlement arithmetic.
+7. `grid_td/buildings.py`, `grid_td/enemies.py`, and `grid_td/waves.py` for
    domain behavior.
-6. `grid_td/power_grid.py` for connectivity and efficiency side effects.
-7. `grid_td/map.py`, `grid_td/position.py`, and `grid_td/renderer.py` for
+8. `grid_td/power_grid.py` for connectivity and efficiency side effects.
+9. `grid_td/map.py`, `grid_td/position.py`, and `grid_td/renderer.py` for
    supporting rules and output.
-8. `gui/gui.py` for the Pygame frontend and its use of public commands.
-9. `tests/` for the currently protected behavior, with `test_core_loop.py` as
-   the main end-to-end entry point.
+10. `gui/gui.py` for the Pygame frontend and its use of public commands.
+11. `tests/` for the currently protected behavior, with `test_core_loop.py` as
+    the main end-to-end entry point.
 
 ## Level Configuration
 
@@ -318,6 +321,9 @@ guaranteed. Dead enemies cannot absorb another tower's attack before cleanup.
 The core, text demo, and `gui/` presentation layer all use the snapshot
 contract:
 
+- `status_snapshot()` returns only `GameStatus` and does not construct the
+  board. Use it for phase, gold, or wave checks; call `snapshot()` only when
+  cell or entity data is needed.
 - `GameSnapshot` provides required fields `cell_size` (currently `1.0` world
   unit) and `distance_metric` (`"manhattan"`). Map width/height are small-cell
   counts. `GameSnapshot.entrances` lists the level's spawn points.
@@ -535,7 +541,12 @@ selected-tower call `game.overload_tower(tower.id)` remains supported.
 │   ├── enemies.py          # Enemy classes and enemy templates
 │   ├── power_grid.py       # Power-grid connection and efficiency calculation
 │   ├── waves.py            # Wave and spawn logic
-│   ├── game_state.py       # Game state and core rules
+│   ├── snapshots.py        # Immutable GUI/text snapshot dataclasses
+│   ├── snapshot_builder.py # Snapshot construction with static-map caching
+│   ├── combat.py           # Tower and enemy combat resolution
+│   ├── enemy_control.py    # Enemy paths, saboteur targeting and movement
+│   ├── economy.py          # Wave settlement arithmetic
+│   ├── game_state.py       # Game state orchestration and public commands
 │   └── renderer.py         # Text renderer
 ├── gui/
 │   ├── gui.py              # Pygame entry point and main loop
