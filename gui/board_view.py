@@ -31,6 +31,10 @@ from gui.styles import (
 )
 
 
+ENTRANCE_COLOR = (250, 226, 139)
+ENEMY_ROUTE_COLOR = (190, 157, 238)
+
+
 class BoardView:
     """Draw small cells, full building footprints, and continuous enemy positions."""
 
@@ -105,7 +109,7 @@ class BoardView:
         preview: BuildPreview | None,
         selected_enemy_id: int | None = None,
     ) -> None:
-        """Draw one coherent frame from a single immutable game snapshot."""
+        """Layer snapshot routes and power links under units and selection outlines."""
         board_rect = pygame.Rect(
             BOARD_LEFT, BOARD_TOP, snapshot.width * CELL, snapshot.height * CELL
         )
@@ -131,11 +135,26 @@ class BoardView:
 
         # Keep candidate coverage beneath units and the placement outline on top.
         selected = buildings.get(selected_building_id)
+        enemy = None
+        if selected_enemy_id is not None:
+            enemy = next((
+                unit for row in snapshot.board for cell in row for unit in cell.enemies
+                if unit.id == selected_enemy_id
+            ), None)
         if preview is not None:
             self._draw_build_range(snapshot, preview)
-        elif selected is not None and selected.range is not None:
-            self._draw_range(snapshot, selected)
+        elif selected is not None:
+            if selected.range is not None:
+                self._draw_range(snapshot, selected)
+        if enemy is not None and len(enemy.path) > 1:
+            points = [self._world_point(point, snapshot) for point in enemy.path]
+            pygame.draw.lines(self.screen, ENEMY_ROUTE_COLOR, False, points, 2)
+        self._draw_entrances(snapshot)
         self._draw_buildings(buildings, selected_building_id)
+        if selected is not None and preview is None:
+            self._draw_power_links(snapshot, selected, buildings)
+        if enemy is not None:
+            self._draw_enemy_building_targets(enemy, buildings)
         self._draw_enemies(snapshot, selected_enemy_id, selected.target_enemy_id if selected else None)
 
         if inspected_position is not None:
@@ -152,10 +171,50 @@ class BoardView:
             )
         if preview is not None:
             self._draw_preview(preview, board_rect)
-        self._draw_legend(preview)
+        self._draw_legend(preview, selected, enemy)
 
-    def _draw_legend(self, preview: BuildPreview | None = None) -> None:
-        """Explain potential coverage without promising the candidate has power."""
+    def _draw_entrances(self, snapshot: GameSnapshot) -> None:
+        """Number spawn markers in level order using the same labels as enemy details."""
+        bounds = pygame.Rect(BOARD_LEFT, BOARD_TOP, snapshot.width * CELL, snapshot.height * CELL)
+        for index, position in enumerate(snapshot.entrances, start=1):
+            label = self.small_font.render(f"E{index}", True, ENTRANCE_COLOR)
+            badge = label.get_rect(center=self._cell_rect(position).center).inflate(4, 2).clamp(bounds)
+            pygame.draw.rect(self.screen, BACKGROUND, badge, border_radius=3)
+            pygame.draw.rect(self.screen, ENTRANCE_COLOR, badge, 1, border_radius=3)
+            self.screen.blit(label, label.get_rect(center=badge.center))
+
+    def _draw_power_links(
+        self, snapshot: GameSnapshot, selected: BuildingSnapshot,
+        buildings: dict[int, BuildingSnapshot],
+    ) -> None:
+        """Draw reported source links above sprites so adjacent footprints stay legible."""
+        for building in buildings.values():
+            source = buildings.get(building.power_source_id)
+            if source is None or selected.id not in (building.id, source.id):
+                continue
+            color = POWER_RANGE_COLOR if building.transmission_efficiency >= 1 else LIMITED_COLOR
+            pygame.draw.line(
+                self.screen, color, self._world_point(source.center, snapshot),
+                self._world_point(building.center, snapshot), 2,
+            )
+
+    def _draw_enemy_building_targets(
+        self, enemy: EnemySnapshot, buildings: dict[int, BuildingSnapshot],
+    ) -> None:
+        """Outline snapshot attack and breach targets without inferring damage events."""
+        for target_id, color in (
+            (enemy.breach_target_id, LIMITED_COLOR),
+            (enemy.target_building_id, UNCHARGED_COLOR),
+        ):
+            target = buildings.get(target_id)
+            if target is not None:
+                pygame.draw.rect(self.screen, color, self._building_rect(target), 2, border_radius=4)
+
+    def _draw_legend(
+        self, preview: BuildPreview | None, selected: BuildingSnapshot | None,
+        enemy: EnemySnapshot | None,
+    ) -> None:
+        """Explain the active overlay and distinguish potential reach from connectivity."""
         for x, label, color in (
             (35, "Road", ROUTE),
             (120, "Mine site", MINE_SITE),
@@ -167,8 +226,11 @@ class BoardView:
             pygame.draw.rect(self.screen, color, pygame.Rect(x, 520, 12, 12))
             text = self.legend_font.render(label, True, TEXT)
             self.screen.blit(text, (x + 17, 518))
-        label = "Grid status is shown on buildings; connections can cross empty cells."
-        color = TEXT
+        label, color = "E1, E2, ... mark enemy entrances.", ENTRANCE_COLOR
+        if enemy is not None:
+            label, color = "Enemy route (purple)  |  Attack target (red)  |  Breach target (amber)", ENEMY_ROUTE_COLOR
+        elif selected is not None:
+            label, color = "Direct power links: full transmission (green) or reduced (amber).", POWER_RANGE_COLOR
         if preview is not None:
             power_radius = getattr(preview, "power_radius", None)
             attack_range = getattr(preview, "attack_range", None)

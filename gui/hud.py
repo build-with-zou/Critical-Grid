@@ -55,7 +55,7 @@ class HUD:
         self._text(
             f"Gold {status.gold}    Debt {status.debt}    Core HP {status.core_hp}"
             f"    Power {report.total_supply}/{report.total_demand}"
-            f"    Efficiency {report.efficiency:.0%}",
+            f"    Grid efficiency {report.efficiency:.0%}",
             34, 76, font=self.small_font,
         )
 
