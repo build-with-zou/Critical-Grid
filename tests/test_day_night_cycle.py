@@ -155,10 +155,10 @@ class DayNightCycleTest(unittest.TestCase):
         self.assertAlmostEqual(self.game.wave_runner.elapsed_seconds, 0.05)
         self.assertAlmostEqual(self.game.elapsed_seconds, before.status.elapsed_seconds + 0.05)
 
-    def test_all_four_days_and_nights_end_in_victory(self) -> None:
-        self.game = GameState(create_demo_map(), core_hp=100)
+    def test_all_eight_days_and_nights_end_in_victory(self) -> None:
+        self.game = GameState(create_demo_map(), core_hp=200)
 
-        for index in range(4):
+        for index in range(len(self.game.waves)):
             with self.subTest(night=index + 1):
                 self.assertEqual(self.game.phase, GamePhase.DAY)
                 self.assertEqual(self.game.wave_index, index)
@@ -172,7 +172,7 @@ class DayNightCycleTest(unittest.TestCase):
         self.assertEqual(status.phase, GamePhase.VICTORY)
         self.assertTrue(status.is_finished)
         self.assertFalse(status.waiting_for_next_wave)
-        self.assertEqual(status.wave_index, 4)
+        self.assertEqual(status.wave_index, len(self.game.waves))
         self.assertEqual(status.result_message, "Victory. All waves cleared.")
         self.assert_rejected_without_changes(self.game.start_next_wave)
         self.assert_rejected_without_changes(self.game.end_wave)
