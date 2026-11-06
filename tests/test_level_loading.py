@@ -139,6 +139,14 @@ class LevelLoadingTest(unittest.TestCase):
             ],
             [("fast", 4, 1.2, 0.0), ("saboteur", 3, 2.0, 1.5)],
         )
+        self.assertEqual(
+            [group.entrance for group in waves[5].groups],
+            [1, 0, 0],
+        )
+        self.assertEqual(
+            [group.entrance for group in waves[7].groups],
+            [1, 0, 0, 1, 0],
+        )
 
     def test_demo_starting_resources(self) -> None:
         level = load_demo_level()
