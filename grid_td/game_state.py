@@ -1064,13 +1064,14 @@ class GameState:
                 Rejected calls leave all state unchanged.
 
         Side effects:
-            Mines produce gold at current efficiency, debt charges 12%
-            interest, and each repair-marked building costs 5 gold. Repair
-            markers are cleared, `wave_index` advances, and the runner is
-            cleared. Other nights return to DAY for unlimited planning; the
-            final wave's settlement records VICTORY. Defeat is handled by
-            `step()` and cannot be settled. Wave settlement clears overload
-            service markers but does not restore HP; use repair_building().
+            The current wave rewards base gold; mines produce gold at current
+            efficiency, debt charges 12% interest, and each repair-marked
+            building costs 5 gold. Repair markers are cleared, `wave_index`
+            advances, and the runner is cleared. Other nights return to DAY for
+            unlimited planning; the final wave's settlement records VICTORY.
+            Defeat is handled by `step()` and cannot be settled. Wave
+            settlement clears overload service markers but does not restore
+            HP; use repair_building().
         """
         if self.is_finished or self.core_hp <= 0:
             raise ValueError("Cannot settle a wave after the game has ended.")
@@ -1079,6 +1080,8 @@ class GameState:
         if not self.waiting_for_next_wave:
             raise ValueError("Cannot settle until spawning is complete and no enemies remain.")
 
+        wave = self.waves[self.wave_index]
+        base_reward = wave.reward
         mine_income = sum(
             building.collect_income()
             for building in self.buildings
@@ -1087,6 +1090,7 @@ class GameState:
         interest = round(self.debt * 0.12)
         repair_cost = sum(5 for building in self.buildings if building.needs_repair)
 
+        self.gold += base_reward
         self.gold += mine_income
         self.gold -= interest
         self.gold -= repair_cost
@@ -1107,7 +1111,8 @@ class GameState:
             self.phase = GamePhase.DAY
 
         return (
-            f"Wave ended. Mine income +{mine_income}, "
+            f"Wave ended. Reward +{base_reward}, "
+            f"Mine income +{mine_income}, "
             f"interest -{interest}, repairs -{repair_cost}, gold {self.gold}."
         )
 
