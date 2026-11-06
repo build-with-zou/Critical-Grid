@@ -80,10 +80,19 @@ class LevelLoadingTest(unittest.TestCase):
 
     def test_demo_level_matches_current_demo_waves(self) -> None:
         waves = load_demo_level().waves
-        self.assertEqual(len(waves), 4)
+        self.assertEqual(len(waves), 8)
         self.assertEqual(
             [wave.name for wave in waves],
-            ["Wave 1", "Wave 2", "Wave 3", "Wave 4"],
+            [
+                "Wave 1",
+                "Wave 2",
+                "Wave 3",
+                "Wave 4",
+                "Wave 5",
+                "Wave 6",
+                "Wave 7",
+                "Wave 8",
+            ],
         )
         self.assertEqual(
             [wave.briefing for wave in waves],
@@ -92,7 +101,15 @@ class LevelLoadingTest(unittest.TestCase):
                 "Fast enemies mixed with basic enemies.",
                 "Armored enemies test sustained damage.",
                 "Saboteurs appear. Protect the grid.",
+                "Mixed formations strain the grid.",
+                "A second front opens in the southeast.",
+                "Both approaches are under heavy pressure.",
+                "Final assault. Hold the core.",
             ],
+        )
+        self.assertEqual(
+            [wave.reward for wave in waves],
+            [25, 35, 45, 60, 80, 100, 130, 170],
         )
         self.assertEqual(
             [
@@ -122,11 +139,19 @@ class LevelLoadingTest(unittest.TestCase):
             ],
             [("fast", 4, 1.2, 0.0), ("saboteur", 3, 2.0, 1.5)],
         )
+        self.assertEqual(
+            [group.entrance for group in waves[5].groups],
+            [1, 0, 0],
+        )
+        self.assertEqual(
+            [group.entrance for group in waves[7].groups],
+            [1, 0, 0, 1, 0],
+        )
 
     def test_demo_starting_resources(self) -> None:
         level = load_demo_level()
         self.assertEqual(level.name, "Frontier Demo")
-        self.assertEqual(level.starting_gold, 180)
+        self.assertEqual(level.starting_gold, 220)
         self.assertEqual(level.starting_core_hp, 30)
 
     def test_intel_price_defaults_and_parses_custom_values(self) -> None:
@@ -137,6 +162,25 @@ class LevelLoadingTest(unittest.TestCase):
             'starting_core_hp = 10\nintel_price = 12\n',
         )
         self.assertEqual(load_level(self.write_level(custom)).intel_price, 12)
+
+    def test_wave_reward_defaults_and_parses_custom_values(self) -> None:
+        self.assertEqual(
+            load_level(self.write_level(MINIMAL_LEVEL)).waves[0].reward,
+            0,
+        )
+
+        custom = MINIMAL_LEVEL.replace(
+            'briefing = "Basic test."\n',
+            'briefing = "Basic test."\nreward = 12\n',
+        )
+        self.assertEqual(load_level(self.write_level(custom)).waves[0].reward, 12)
+
+    def test_negative_wave_reward_is_rejected(self) -> None:
+        negative = MINIMAL_LEVEL.replace(
+            'briefing = "Basic test."\n',
+            'briefing = "Basic test."\nreward = -1\n',
+        )
+        self.assert_invalid(negative, "reward")
 
     def test_invalid_intel_price_is_rejected(self) -> None:
         negative = MINIMAL_LEVEL.replace(

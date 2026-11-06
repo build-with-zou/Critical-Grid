@@ -58,7 +58,7 @@ _TERRAIN_KEYS = (
     "walk_only",
     "build_only",
 )
-_WAVE_KEYS = frozenset({"name", "briefing", "threat", "groups"})
+_WAVE_KEYS = frozenset({"name", "briefing", "threat", "reward", "groups"})
 _GROUP_KEYS = frozenset(
     {"enemy_kind", "count", "interval_seconds", "start_delay_seconds", "entrance"}
 )
@@ -414,6 +414,12 @@ def _parse_waves(
                     f"{context}.threat",
                     "must be one of: low, medium, high.",
                 )
+        reward = _require_int(
+            wave_data.get("reward", 0),
+            f"{context}.reward",
+            path,
+            minimum=0,
+        )
 
         groups_value = wave_data.get("groups")
         if not isinstance(groups_value, list) or not groups_value:
@@ -477,6 +483,7 @@ def _parse_waves(
                 briefing=briefing,
                 groups=tuple(groups),
                 threat=threat,
+                reward=reward,
             )
         )
     return tuple(waves)

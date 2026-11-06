@@ -48,9 +48,11 @@ priorities, with shortages allocated from high to low tiers. Every building has 
 and gold-funded repair. Saboteurs now seek power plants first, then nodes, and
 switch to higher-priority facilities that enter attack range. Enemies use
 per-enemy open-ground pathfinding with buildings as blockers, automatic breach
-attacks, and conservative attacks on mines and towers; GUI route previews are
-still pending. `BuildingSnapshot.power_source_id` exposes the direct connected
-transmitter ID; the core and disconnected buildings report `None`.
+attacks, and conservative attacks on mines and towers. The GUI now draws
+enemy route previews, entrance markers, and selected power links; combat damage
+events remain future work. `BuildingSnapshot.power_source_id` exposes the
+direct connected transmitter ID; the core and disconnected buildings report
+`None`.
 Treat the code as the behavioral source of truth when changing the prototype;
 use the design document for planned features and unresolved rules.
 
@@ -76,8 +78,9 @@ A level document is a TOML file under `levels/`. It owns the fixed map, the
 wave schedule, and the starting resources. The loader rejects unknown fields,
 malformed values, unknown enemy kinds, out-of-bounds terrain, overlapping
 terrain categories, and routes whose centerline is not walkable.
-`intel_price` must be a non-negative integer, and an authored wave `threat`
-must be `low`, `medium`, or `high`.
+`intel_price` and per-wave `reward` must be non-negative integers, and an
+authored wave `threat` must be `low`, `medium`, or `high`. The bundled demo
+level starts with 220 gold to support its eight-night curve.
 
 ```toml
 name = "Example Level"
@@ -110,6 +113,7 @@ build_only = []
 [[waves]]
 name = "Wave 1"
 briefing = "Basic enemies."
+reward = 25  # Paid at settlement, before interest and repairs.
 # threat = "low"  # Optional low/medium/high override; omitted means derived.
 
 [[waves.groups]]
@@ -215,9 +219,9 @@ if game.snapshot().status.waiting_for_next_wave:
   and `current_wave_name` describe the upcoming night; NIGHT uses the same index.
 - `waiting_for_next_wave` is true only during NIGHT while the game is
   unfinished, the core is alive, spawning is complete, and no enemies remain.
-- `end_wave()` returns a settlement string. It pays mine income, charges
-  interest and repairs, clears repair markers, advances the wave index, and
-  removes the runner exactly once. Settlement enters DAY, except that the final
+- `end_wave()` returns a settlement string. It pays the wave's base reward and
+  mine income, charges interest and repairs, clears repair markers, advances
+  the wave index, and removes the runner exactly once. Settlement enters DAY, except that the final
   wave records VICTORY directly without another planning day.
 - `start_next_wave()` returns `None` and creates a runner only during DAY,
   including the first day. It enters NIGHT without advancing the wave index
@@ -436,8 +440,8 @@ The current GUI exposes building sale, HP repair, manual tower targeting,
 enemy inspection, speed controls, and automatic bullet time. It reads display
 data from snapshots and sends gameplay changes through public commands. Enemy
 building attacks currently target power plants and nodes; further attack
-targets, attack events, power-source topology, and route previews remain future
-work.
+targets and combat damage events remain future work. Route previews, entrance
+markers, and selected power links are already exposed in the GUI.
 
 ## Selling and Targeting
 
@@ -601,8 +605,9 @@ GUI interaction tests use the environment with the GUI dependencies installed:
   node-chain transmission attenuation for damaged power nodes.
 - Saboteurs actively seeking power plants and nodes, with opportunistic
   in-range target switching.
-- DAY/NIGHT lifecycle with explicit Start Night and wave settlement.
-- Wave spawning, mine income, debt interest, kill rewards, and overload fees.
+- Eight-night DAY/NIGHT lifecycle with explicit Start Night and wave settlement.
+- Wave spawning, per-wave base rewards, mine income, debt interest, kill rewards,
+  and overload fees.
 - Free coarse wave intel plus once-per-wave detailed intel, core overdraft,
   tower overload, building repair, and selling.
 - Manual tower targeting through stable enemy IDs.
@@ -620,7 +625,6 @@ work is:
 
 - Pathfinding finalization: GUI path previews and route-aware build previews.
 - Combat completion: enemy attacks on more building types.
-- Eight-night progression and balance.
 - Additional level documents and GUI level selection.
 - GUI visualization for attack events, power-source topology, and route
   previews.

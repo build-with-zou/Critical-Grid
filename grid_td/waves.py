@@ -42,14 +42,21 @@ class Wave:
     briefing: str  # Coarse description shown by free and detailed intel.
     groups: tuple[SpawnGroup, ...]  # Spawn groups advanced in parallel.
     threat: str | None = None  # Optional low/medium/high override for intel.
+    reward: int = 0  # Gold paid at settlement, before interest and repairs.
 
     def __post_init__(self) -> None:
-        """Reject authored threat values outside the shared enum."""
+        """Reject authored threat and reward values outside the shared rules."""
         if self.threat is not None:
             if not isinstance(self.threat, str) or self.threat not in THREAT_LEVELS:
                 raise ValueError(
                     "Wave threat must be one of: low, medium, high."
                 )
+        if (
+            isinstance(self.reward, bool)
+            or not isinstance(self.reward, int)
+            or self.reward < 0
+        ):
+            raise ValueError("Wave reward must be a non-negative integer.")
 
 
 class WaveRunner:

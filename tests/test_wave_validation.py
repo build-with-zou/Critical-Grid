@@ -72,7 +72,10 @@ class WaveValidationTest(unittest.TestCase):
         message = game.end_wave()
 
         self.assertIn("Mine income +12, interest -8, repairs -5", message)
-        self.assertEqual(game.gold, gold_before + 12 - 8 - 5)
+        self.assertEqual(
+            game.gold,
+            gold_before + game.waves[0].reward + 12 - 8 - 5,
+        )
         self.assertEqual(game.debt, debt_before)
         self.assertFalse(tower.needs_repair)
         self.assertEqual(game.wave_index, 1)
@@ -116,7 +119,7 @@ class WaveValidationTest(unittest.TestCase):
 
     def test_all_waves_finish_only_after_final_settlement(self) -> None:
         # Extra health lets real enemies finish their routes without defenses.
-        self.game = GameState(create_demo_map(), core_hp=100)
+        self.game = GameState(create_demo_map(), core_hp=200)
         game = self.game
         game.start_next_wave()
 

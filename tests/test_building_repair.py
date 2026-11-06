@@ -311,10 +311,11 @@ class BuildingRepairTest(unittest.TestCase):
         game.step(30.0)
         gold_before = game.gold
         interest = round(game.debt * 0.12)
+        reward = game.waves[game.wave_index].reward
 
         game.end_wave()
 
-        self.assertEqual(game.gold, gold_before - interest - 5)
+        self.assertEqual(game.gold, gold_before + reward - interest - 5)
         self.assertFalse(tower.needs_repair)
         self.assertEqual(tower.hp, tower.max_hp - 1)
         self.assertEqual(game.cell_snapshot(tower.position).building.repair_cost, 1)
