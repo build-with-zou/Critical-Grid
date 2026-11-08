@@ -73,8 +73,7 @@ class Sidebar:
             tool_tip_text="Remove the manual target and resume automatic selection.",
         )
         self.intel_button = UIButton(
-            pygame.Rect(PANEL_LEFT + 16, 426, 151, 32), "Wave Intel (8g)", manager,
-            tool_tip_text="Spend 8 gold to reveal the current wave briefing.",
+            pygame.Rect(PANEL_LEFT + 16, 426, 151, 32), "Wave Intel", manager,
         )
         self.overdraft_button = UIButton(
             pygame.Rect(PANEL_LEFT + 180, 426, 151, 32), "Overdraft +40g", manager,
@@ -111,7 +110,8 @@ class Sidebar:
         targeting: bool = False,
     ) -> None:
         """Show current prices and disable actions that cannot apply to the selection."""
-        active = not snapshot.status.is_finished
+        status = snapshot.status
+        active = not status.is_finished
         sellable = building is not None and building.kind != "core"
         repairable = building is not None and building.hp < building.max_hp
         tower = building is not None and building.range is not None
@@ -126,6 +126,19 @@ class Sidebar:
             f"Power Priority: {building.power_priority.value.title()} (Click to Cycle)"
             if priority_changeable else "Cycle Power Priority"
         )
+        if status.free_intel is None:
+            label, tooltip = "No Wave Intel", "No incoming wave."
+        elif status.detailed_intel is not None:
+            label, tooltip = "Intel Unlocked", "Detailed intel is available below the map."
+        elif not active or status.core_hp <= 0:
+            label, tooltip = "Intel Unavailable", "Detailed intel cannot be purchased after the game ends."
+        elif status.intel_price == 0:
+            label, tooltip = "Wave Intel (Free)", "Unlock detailed intel for this wave for free."
+        else:
+            label = f"Wave Intel ({status.intel_price}g)"
+            tooltip = f"Spend {status.intel_price} gold to unlock detailed intel for this wave."
+        self.intel_button.set_text(label)
+        self.intel_button.set_tooltip(tooltip)
         for button, enabled in (
             (self.sell_button, active and sellable),
             (self.repair_button, active and repairable),
@@ -134,7 +147,7 @@ class Sidebar:
             (self.clear_target_button, active and tower and building.target_enemy_id is not None),
             (self.run_button, active),
             (self.step_button, active and snapshot.status.phase == GamePhase.NIGHT),
-            (self.intel_button, active),
+            (self.intel_button, active and status.core_hp > 0 and status.free_intel is not None),
             (self.overdraft_button, active),
             (self.priority_button, active and priority_changeable),
         ):
