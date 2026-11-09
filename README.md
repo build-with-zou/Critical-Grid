@@ -27,10 +27,12 @@ schedule, starting gold, and starting core health. The older
 `create_demo_map()` and `create_demo_waves()` helpers remain as compatibility
 wrappers around the same file.
 
-`GameState.step(seconds)` is the simulation boundary. Each NIGHT step spawns due
-enemies and assigns their paths, recalculates power, lets connected towers
-attack, advances enemies, then resolves breach attacks and saboteur attacks on
-power plants and nodes. Wave settlement is separate:
+`GameState.step(seconds)` is the simulation boundary. Public calls may use any
+finite duration; the core splits them into fixed `0.05`-second logical slices
+(plus an exact remainder) so large frames match repeated small frames. Each
+slice spawns due enemies and assigns their paths, recalculates power, lets
+connected towers attack, advances enemies, then resolves breach attacks and
+saboteur attacks on power plants and nodes. Wave settlement is separate:
 `end_wave()` applies
 mine income, debt interest, and repair costs, while `start_next_wave()` creates
 the next spawn runner.
@@ -38,7 +40,8 @@ the next spawn runner.
 Presentation layers should read through `GameState.snapshot()` rather than
 accessing mutable state lists and counters directly. The snapshot contains a
 status object plus a row-major board of cell snapshots, so both text and GUI
-frontends can render the same source of truth.
+frontends can render the same source of truth. `snapshot().events` (also
+`GameState.events`) exposes immutable events for the latest `step()` call.
 
 The current Python prototype is intentionally smaller than
 `GAME_DESIGN.md`: the power grid propagates through the core, power plants and
@@ -49,8 +52,9 @@ and gold-funded repair. Saboteurs now seek power plants first, then nodes, and
 switch to higher-priority facilities that enter attack range. Enemies use
 per-enemy open-ground pathfinding with buildings as blockers, automatic breach
 attacks, and conservative attacks on mines and towers. The GUI now draws
-enemy route previews, entrance markers, and selected power links; combat damage
-events remain future work. `BuildingSnapshot.power_source_id` exposes the
+enemy route previews, entrance markers, and selected power links; structured
+simulation events expose attacks, damage, defeats, core hits, building losses,
+and power-connection changes for future GUI feedback. `BuildingSnapshot.power_source_id` exposes the
 direct connected transmitter ID; the core and disconnected buildings report
 `None`.
 Treat the code as the behavioral source of truth when changing the prototype;
@@ -358,10 +362,13 @@ contract:
 ## Simulation Clock
 
 `GameState` owns the authoritative logical clock. Each call to
-`game.step(seconds)` during NIGHT advances that same finite, non-negative delta
-through the wave scheduler, tower cooldowns, overload timers, enemy movement, and
-`elapsed_seconds`. A fixed-step caller can use `0.05` seconds for 20 logical
-updates per second; the core does not start its own timer or event loop.
+`game.step(seconds)` during NIGHT advances that finite, non-negative duration
+through the wave scheduler, tower cooldowns, overload timers, enemy movement,
+and `elapsed_seconds`. The core splits large calls into fixed
+`GameState.FIXED_STEP_SECONDS` (`0.05`) slices, with a final exact remainder, so
+`step(1.0)` and twenty `step(0.05)` calls produce the same sub-step sequence.
+The core does not start its own timer or event loop.
+
 DAY freezes elapsed time, spawning, cooldowns, overload timers, and movement;
 valid steps do nothing. `elapsed_seconds` accumulates combat time across all
 nights, while each new wave runner starts its local spawn clock at zero.
@@ -370,7 +377,28 @@ nights, while each new wave runner starts its local spawn clock at zero.
 rounding. During NIGHT, `step(0)` remains valid and processes events scheduled at
 logical time zero. Invalid durations are rejected in every phase, including
 DAY and terminal phases. Negative, non-finite, boolean, string, and
-unrepresentably large values raise `ValueError` without changing state.
+unrepresentably large values raise `ValueError` without changing state or the
+previous step's event list.
+
+### Simulation Events
+
+`snapshot().events` contains immutable `GameEvent` records for the latest
+public `step()` call. Event types include `ENEMY_SPAWNED`, `TOWER_ATTACK`,
+`ENEMY_DAMAGED`, `ENEMY_DEFEATED`, `ENEMY_REACHED_CORE`, `CORE_DAMAGED`,
+`BUILDING_DAMAGED`, `BUILDING_DESTROYED`, and `POWER_CONNECTION_CHANGED`.
+`source_id` names the attacker or source, `target_id` the affected entity,
+`amount` the applied damage or reward, and `position` the affected world
+position. Power events set `connected` to the new connectivity state. Events
+are read-only and do not change command interfaces.
+
+### Construction Invariants
+
+The constructor rejects negative resources, non-finite elapsed time, wrong
+collection types, injected cores, and duplicate positive building or enemy IDs.
+`buildings`, `enemies`, and `waves` use validated setters for same-type
+list/tuple assignment; enemy fixtures may still use `id == 0` for unassigned
+test entities. `validate_state()` is a test-only diagnostic for core identity,
+ID uniqueness, wave bounds, and DAY/NIGHT runner consistency.
 
 ## Building Health and Repair
 
@@ -439,8 +467,9 @@ if building is not None:
 The current GUI exposes building sale, HP repair, manual tower targeting,
 enemy inspection, speed controls, and automatic bullet time. It reads display
 data from snapshots and sends gameplay changes through public commands. Enemy
-building attacks currently target power plants and nodes; further attack
-targets and combat damage events remain future work. Route previews, entrance
+building attacks currently target power plants and nodes; structured damage
+events are available through `snapshot().events`, while additional attack
+targets remain future work. Route previews, entrance
 markers, and selected power links are already exposed in the GUI.
 
 ## Selling and Targeting
@@ -626,6 +655,6 @@ work is:
 - Pathfinding finalization: GUI path previews and route-aware build previews.
 - Combat completion: enemy attacks on more building types.
 - Additional level documents and GUI level selection.
-- GUI visualization for attack events, power-source topology, and route
-  previews.
+- GUI feedback that consumes `snapshot().events` for attack, damage, defeat,
+  core-hit, and power-connection visuals.
 
