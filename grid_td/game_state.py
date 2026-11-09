@@ -70,6 +70,38 @@ class GamePhase(str, Enum):
     DEFEAT = "defeat"
 
 
+class GameEventType(str, Enum):
+    """Stable names for observable changes produced by the simulation."""
+
+    ENEMY_SPAWNED = "enemy_spawned"
+    TOWER_ATTACK = "tower_attack"
+    ENEMY_DAMAGED = "enemy_damaged"
+    ENEMY_DEFEATED = "enemy_defeated"
+    ENEMY_REACHED_CORE = "enemy_reached_core"
+    BUILDING_DAMAGED = "building_damaged"
+    BUILDING_DESTROYED = "building_destroyed"
+    CORE_DAMAGED = "core_damaged"
+    POWER_CONNECTION_CHANGED = "power_connection_changed"
+
+
+@dataclass(frozen=True)
+class GameEvent:
+    """Immutable record of one observable gameplay change.
+
+    ``source_id`` identifies the attacker or source entity; ``target_id``
+    identifies the affected building or enemy. ``amount`` is the applied damage
+    or reward, and ``position`` is the affected entity's world position.
+    Power-connection events use ``connected`` for the new connectivity state.
+    """
+
+    type: GameEventType
+    source_id: int | None = None
+    target_id: int | None = None
+    amount: float | int | None = None
+    position: WorldPosition | None = None
+    connected: bool | None = None
+
+
 @dataclass(frozen=True)
 class PowerSnapshot:
     """GUI-safe copy of the latest power-grid summary."""
@@ -245,6 +277,7 @@ class GameSnapshot:
     cell_size: float  # One world unit per small cell.
     distance_metric: str
     entrances: tuple[Position, ...] = ()  # Enemy spawn points for this level.
+    events: tuple[GameEvent, ...] = ()  # Events from the latest public command.
 
 
 BUILDING_KIND_BY_TYPE: tuple[tuple[type[Building], str], ...] = (
@@ -629,7 +662,17 @@ class GameState:
             cell_size=1.0,
             distance_metric=DISTANCE_METRIC,
             entrances=self.grid_map.spawn_entrances,
+            events=self._last_events,
         )
+
+    @property
+    def events(self) -> tuple[GameEvent, ...]:
+        """Return immutable events produced by the latest public command."""
+        return self._last_events
+
+    def _record_event(self, event: GameEvent) -> None:
+        """Append an event while keeping the public event view immutable."""
+        self._last_events = (*self._last_events, event)
 
     def status_snapshot(self) -> GameStatus:
         """Return the current top-level game status without mutable entities."""
@@ -1348,19 +1391,50 @@ class GameState:
                 enemy.path_progress = 0.0
                 self.enemies.append(enemy)
                 self._assign_enemy_path(enemy)
+                self._record_event(GameEvent(
+                    GameEventType.ENEMY_SPAWNED,
+                    target_id=enemy.id,
+                    position=entrance.center,
+                ))
 
+        before_power = self._connected_state()
         self.recalculate_power()
+        self._record_power_connection_changes(before_power)
         self._towers_attack(delta)
         self._refresh_saboteur_targets()
         self._advance_enemies(delta)
         if self.core_hp > 0:
             self._enemies_attack_buildings(delta)
+            before_power = self._connected_state()
             self.recalculate_power()
+            self._record_power_connection_changes(before_power)
 
         if self.core_hp <= 0:
-            self.core_hp = 0
-            self.phase = GamePhase.DEFEAT
-            self.result_message = "Defeat. The core was destroyed."
+            self._enter_defeat()
+
+    def _enter_defeat(self) -> None:
+        """Record the single DEFEAT transition without discarding the board."""
+        self.core_hp = 0
+        self.phase = GamePhase.DEFEAT
+        self.result_message = "Defeat. The core was destroyed."
+
+    def _connected_state(self) -> dict[int, bool]:
+        """Return current connectivity by building ID for change detection."""
+        return {building.id: building.connected_to_grid for building in self.buildings}
+
+    def _record_power_connection_changes(self, before: dict[int, bool]) -> None:
+        """Record connectivity transitions since the supplied snapshot."""
+        for building in self.buildings:
+            if building.id not in before:
+                continue
+            if before[building.id] == building.connected_to_grid:
+                continue
+            self._record_event(GameEvent(
+                GameEventType.POWER_CONNECTION_CHANGED,
+                target_id=building.id,
+                position=building.center,
+                connected=building.connected_to_grid,
+            ))
 
     def recalculate_power(self) -> PowerReport:
         """Recalculate power and cache the latest summary report."""
@@ -1604,7 +1678,24 @@ class GameState:
                 continue
 
             damage = building.current_damage()
+            target_position = self._enemy_world_position(target)
+            self._record_event(GameEvent(
+                GameEventType.TOWER_ATTACK,
+                source_id=building.id,
+                target_id=target.id,
+                amount=damage,
+                position=target_position,
+            ))
+            hp_before = target.hp
             target.take_damage(damage)
+            if target.hp < hp_before:
+                self._record_event(GameEvent(
+                    GameEventType.ENEMY_DAMAGED,
+                    source_id=building.id,
+                    target_id=target.id,
+                    amount=hp_before - target.hp,
+                    position=target_position,
+                ))
             if isinstance(building, CannonTower):
                 self._apply_splash_damage(building, target, damage)
             if isinstance(building, SlowTower):
@@ -1613,6 +1704,13 @@ class GameState:
             building.reset_cooldown()
 
         defeated = [enemy for enemy in self.enemies if not enemy.is_alive]
+        for enemy in defeated:
+            self._record_event(GameEvent(
+                GameEventType.ENEMY_DEFEATED,
+                target_id=enemy.id,
+                amount=enemy.reward,
+                position=self._enemy_world_position(enemy),
+            ))
         self.gold += sum(enemy.reward for enemy in defeated)
         self.enemies = [enemy for enemy in self.enemies if enemy.is_alive]
 
@@ -1631,8 +1729,18 @@ class GameState:
         for enemy in self.enemies:
             if enemy is primary or not enemy.is_alive:
                 continue
-            if world_distance(self._enemy_world_position(enemy), origin) <= tower.SPLASH_RADIUS:
+            position = self._enemy_world_position(enemy)
+            if world_distance(position, origin) <= tower.SPLASH_RADIUS:
+                hp_before = enemy.hp
                 enemy.take_damage(splash_damage)
+                if enemy.hp < hp_before:
+                    self._record_event(GameEvent(
+                        GameEventType.ENEMY_DAMAGED,
+                        source_id=tower.id,
+                        target_id=enemy.id,
+                        amount=hp_before - enemy.hp,
+                        position=position,
+                    ))
 
     def _select_target(self, tower: Tower) -> Enemy | None:
         """Select a target, preferring a valid manual target when set.
@@ -1740,8 +1848,23 @@ class GameState:
             if enemy.has_reached_core(self._active_enemy_path(enemy)):
                 escaped.append(enemy)
 
+        core_position = self._core.center
         for enemy in escaped:
+            self._record_event(GameEvent(
+                GameEventType.ENEMY_REACHED_CORE,
+                target_id=enemy.id,
+                amount=enemy.damage_to_core,
+                position=core_position,
+            ))
+            hp_before = self._core.hp
             self._core.take_damage(enemy.damage_to_core)
+            if self._core.hp < hp_before:
+                self._record_event(GameEvent(
+                    GameEventType.CORE_DAMAGED,
+                    source_id=enemy.id,
+                    amount=hp_before - self._core.hp,
+                    position=core_position,
+                ))
 
         self.enemies = [enemy for enemy in self.enemies if enemy not in escaped]
 
@@ -1785,6 +1908,35 @@ class GameState:
             ),
         )
 
+    def _damage_building(
+        self, enemy: Enemy, building: Building, amount: int
+    ) -> bool:
+        """Apply enemy damage and record damaged/destroyed events.
+
+        Returns:
+            ``True`` when this hit destroyed the building, so callers can
+            trigger path replanning after the attack phase.
+        """
+        hp_before = building.hp
+        building.take_damage(amount)
+        if building.hp < hp_before:
+            self._record_event(GameEvent(
+                GameEventType.BUILDING_DAMAGED,
+                source_id=enemy.id,
+                target_id=building.id,
+                amount=hp_before - building.hp,
+                position=building.center,
+            ))
+        if hp_before > 0 and building.is_destroyed:
+            self._record_event(GameEvent(
+                GameEventType.BUILDING_DESTROYED,
+                source_id=enemy.id,
+                target_id=building.id,
+                position=building.center,
+            ))
+            return True
+        return False
+
     def _enemies_attack_buildings(self, seconds: float) -> None:
         """Resolve breach attacks and active attacks on enemy-specific targets.
 
@@ -1808,10 +1960,9 @@ class GameState:
             breaching_ids.add(enemy.id)
             if not enemy.can_breach or not self._in_breach_range(enemy, target):
                 continue
-            target.take_damage(1)
-            enemy.reset_breach_cooldown()
-            if target.is_destroyed:
+            if self._damage_building(enemy, target, 1):
                 destroyed_any = True
+            enemy.reset_breach_cooldown()
 
         targeted_ids: set[int] = set()
         for enemy in self.enemies:
@@ -1828,11 +1979,10 @@ class GameState:
                 if not enemy.targets_power_buildings:
                     enemy.target_building_id = None
                 continue
-            target.take_damage(enemy.attack_damage)
+            if self._damage_building(enemy, target, enemy.attack_damage):
+                destroyed_any = True
             enemy.reset_attack_cooldown()
             targeted_ids.add(enemy.id)
-            if target.is_destroyed:
-                destroyed_any = True
 
         for enemy in self.enemies:
             if enemy.id in breaching_ids or enemy.id in targeted_ids:
@@ -1846,10 +1996,9 @@ class GameState:
             if target is None:
                 continue
             enemy.target_building_id = target.id
-            target.take_damage(enemy.attack_damage)
-            enemy.reset_attack_cooldown()
-            if target.is_destroyed:
+            if self._damage_building(enemy, target, enemy.attack_damage):
                 destroyed_any = True
+            enemy.reset_attack_cooldown()
 
         if destroyed_any:
             self._replan_all_enemies()
