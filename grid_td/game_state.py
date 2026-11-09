@@ -270,8 +270,6 @@ class GameState:
     gold: int = 180  # Current spendable gold; build, intel, and settlement change it.
     debt: int = 0  # Debt from overdraft/overload; interest is charged at wave end.
     elapsed_seconds: float = 0.0  # Authoritative logical clock, measured in seconds.
-    buildings: list[Building] = field(default_factory=list)  # Current building entities.
-    enemies: list[Enemy] = field(default_factory=list)  # Living enemies on the board.
     phase: GamePhase = field(default=GamePhase.DAY, init=False)
     _core: Core = field(init=False, repr=False)
 
@@ -300,16 +298,117 @@ class GameState:
             or intel_price < 0
         ):
             raise ValueError("Intel price must be a non-negative integer.")
+        if not isinstance(grid_map, GridMap):
+            raise ValueError("Grid map must be a GridMap.")
+        for value, label in ((gold, "Gold"), (debt, "Debt"), (core_hp, "Core HP")):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{label} must be a non-negative integer.")
+        if isinstance(elapsed_seconds, bool) or not isinstance(elapsed_seconds, (int, float)):
+            raise ValueError("Elapsed seconds must be a finite non-negative number.")
+        try:
+            elapsed = float(elapsed_seconds)
+        except OverflowError:
+            raise ValueError("Elapsed seconds must be a finite non-negative number.") from None
+        if not isfinite(elapsed) or elapsed < 0:
+            raise ValueError("Elapsed seconds must be a finite non-negative number.")
+        if buildings is not None and not isinstance(buildings, list):
+            raise ValueError("Buildings must be provided as a list.")
+        if enemies is not None and not isinstance(enemies, list):
+            raise ValueError("Enemies must be provided as a list.")
+        if waves is not None and not isinstance(waves, tuple):
+            raise ValueError("Waves must be provided as a tuple.")
         self.grid_map = grid_map
         self.gold = gold
         self.debt = debt
-        self.elapsed_seconds = elapsed_seconds
+        self.elapsed_seconds = elapsed
         self.buildings = buildings if buildings is not None else []
         self.enemies = enemies if enemies is not None else []
         self.waves = waves if waves is not None else create_demo_waves()
         self.intel_price = intel_price
         self.phase = GamePhase.DAY
         self.__post_init__(core_hp)
+        self._last_events: tuple[GameEvent, ...] = ()
+        self.validate_state()
+
+    def _validate_buildings(self, value: object) -> list[Building]:
+        """Return a validated building list without copying it."""
+        if not isinstance(value, list):
+            raise ValueError("Buildings must be provided as a list.")
+        core = getattr(self, "_core", None)
+        seen: set[int] = set()
+        core_count = 0
+        for building in value:
+            if not isinstance(building, Building):
+                raise ValueError("Buildings must contain Building instances.")
+            if isinstance(building, Core):
+                core_count += 1
+                if core is None or building is not core:
+                    raise ValueError("Only GameState's own core may be listed.")
+            if (
+                isinstance(building.id, bool)
+                or not isinstance(building.id, int)
+                or building.id <= 0
+            ):
+                raise ValueError("Building IDs must be positive integers.")
+            if building.id in seen:
+                raise ValueError(f"Duplicate building ID: {building.id}")
+            seen.add(building.id)
+        if core is not None and core_count != 1:
+            raise ValueError("The building list must contain exactly one core.")
+        return value
+
+    @staticmethod
+    def _validate_enemies(value: object) -> list[Enemy]:
+        """Return a validated enemy list without copying it."""
+        if not isinstance(value, list):
+            raise ValueError("Enemies must be provided as a list.")
+        seen: set[int] = set()
+        for enemy in value:
+            if not isinstance(enemy, Enemy):
+                raise ValueError("Enemies must contain Enemy instances.")
+            if isinstance(enemy.id, bool) or not isinstance(enemy.id, int) or enemy.id < 0:
+                raise ValueError("Enemy IDs must be non-negative integers.")
+            if enemy.id > 0:
+                if enemy.id in seen:
+                    raise ValueError(f"Duplicate enemy ID: {enemy.id}")
+                seen.add(enemy.id)
+        return value
+
+    @staticmethod
+    def _validate_waves(value: object) -> tuple[Wave, ...]:
+        """Return a validated wave tuple without copying it."""
+        if not isinstance(value, tuple):
+            raise ValueError("Waves must be provided as a tuple.")
+        if not all(isinstance(wave, Wave) for wave in value):
+            raise ValueError("Waves must contain Wave instances.")
+        return value
+
+    @property
+    def buildings(self) -> list[Building]:
+        """Return the current mutable building entities."""
+        return self._buildings
+
+    @buildings.setter
+    def buildings(self, value: object) -> None:
+        self._buildings = self._validate_buildings(value)
+
+    @property
+    def enemies(self) -> list[Enemy]:
+        """Return the current living enemy entities."""
+        return self._enemies
+
+    @enemies.setter
+    def enemies(self, value: object) -> None:
+        self._enemies = self._validate_enemies(value)
+
+    @property
+    def waves(self) -> tuple[Wave, ...]:
+        """Return the configured wave schedule."""
+        return self._waves
+
+    @waves.setter
+    def waves(self, value: object) -> None:
+        self._waves = self._validate_waves(value)
 
     def __post_init__(self, core_hp: int = 30) -> None:
         """Initialize runtime collaborators, wave state, the core, and power.
@@ -323,8 +422,12 @@ class GameState:
         # The upcoming wave index exists during planning, but its clock must
         # not start until the player explicitly ends the day.
         self.wave_runner: WaveRunner | None = None
-        self.next_building_id = 1
-        self.next_enemy_id = 1
+        self.next_building_id = max(
+            (building.id for building in self.buildings), default=0
+        ) + 1
+        self.next_enemy_id = max(
+            (enemy.id for enemy in self.enemies if enemy.id > 0), default=0
+        ) + 1
         self.result_message = ""
         self.latest_power_report = PowerReport(0, 0, 0, 1.0)
         # Intel is static per wave; cache it lazily and rebuild if callers
@@ -342,6 +445,71 @@ class GameState:
         core.footprint = self.grid_map.core_footprint
         self._add_building(core)
         self.recalculate_power()
+
+    def validate_state(self) -> None:
+        """Raise ``AssertionError`` when core invariants are inconsistent.
+
+        This diagnostic is intended for tests and debugging only; the normal
+        simulation never calls it. It validates resources, entity identity and
+        ID uniqueness, wave bounds, and the DAY/NIGHT runner relationship while
+        still allowing test fixtures that inject enemies with ``id == 0``.
+        """
+        for value, label in (
+            (self.gold, "Gold"),
+            (self.debt, "Debt"),
+            (self.core_hp, "Core HP"),
+        ):
+            assert (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value >= 0
+            ), f"{label} must be a non-negative integer."
+        elapsed = float(self.elapsed_seconds)
+        assert isfinite(elapsed) and elapsed >= 0, (
+            "Elapsed seconds must be finite and non-negative."
+        )
+        assert isinstance(self.waves, tuple) and all(
+            isinstance(wave, Wave) for wave in self.waves
+        ), "Waves must be a tuple of Wave instances."
+        assert (
+            isinstance(self.wave_index, int)
+            and not isinstance(self.wave_index, bool)
+            and 0 <= self.wave_index <= len(self.waves)
+        ), "Wave index is out of range."
+
+        cores = [building for building in self.buildings if isinstance(building, Core)]
+        assert len(cores) == 1, "State must contain exactly one core."
+        assert cores[0] is self._core, "The core entity does not match _core."
+        building_ids = [building.id for building in self.buildings]
+        assert len(building_ids) == len(set(building_ids)), (
+            "Building IDs must be unique."
+        )
+        assert all(
+            isinstance(building_id, int)
+            and not isinstance(building_id, bool)
+            and building_id > 0
+            for building_id in building_ids
+        ), "Building IDs must be positive integers."
+        assert self.next_building_id > max(building_ids, default=0), (
+            "next_building_id must exceed every current building ID."
+        )
+
+        assert all(isinstance(enemy, Enemy) for enemy in self.enemies), (
+            "Enemies must contain Enemy instances."
+        )
+        positive_enemy_ids = [enemy.id for enemy in self.enemies if enemy.id > 0]
+        assert len(positive_enemy_ids) == len(set(positive_enemy_ids)), (
+            "Assigned enemy IDs must be unique."
+        )
+        assert self.next_enemy_id > max(positive_enemy_ids, default=0), (
+            "next_enemy_id must exceed every assigned enemy ID."
+        )
+
+        assert isinstance(self.phase, GamePhase), "Phase must be a GamePhase value."
+        if self.phase == GamePhase.DAY:
+            assert self.wave_runner is None, "DAY must not keep a wave runner."
+        elif self.phase == GamePhase.NIGHT:
+            assert self.wave_runner is not None, "NIGHT requires a wave runner."
 
     @classmethod
     def from_level(cls, level: "LevelDefinition") -> "GameState":
