@@ -25,6 +25,7 @@ from grid_td.levels import load_demo_level
 from grid_td.position import Position
 from gui.board_view import BoardView
 from gui.hud import HUD
+from gui.intel_view import IntelView
 from gui.menu import MenuView
 from gui.sidebar import Sidebar
 from gui.styles import BACKGROUND, FPS, WINDOW_SIZE
@@ -53,6 +54,7 @@ class CriticalGridGUI:
         self.board = BoardView(self.screen, self.font)
         self.sidebar = Sidebar(self.screen, self.manager, self.small_font, self.font)
         self.hud = HUD(self.screen, self.font, self.small_font, self.title_font)
+        self.intel = IntelView(self.screen, self.manager, self.small_font)
         self.menu = MenuView(self.screen, level)
         self.view = "start"
         self.running = False
@@ -140,6 +142,8 @@ class CriticalGridGUI:
             self._clear_selected_target()
         elif button == self.sidebar.intel_button:
             self._buy_wave_intel()
+        elif button in (self.intel.groups_button, self.intel.timeline_button):
+            self.intel.show_page(self.game.snapshot(), timeline=button == self.intel.timeline_button)
         elif button == self.sidebar.overdraft_button:
             self._take_core_overdraft()
         elif button == self.sidebar.priority_button:
@@ -165,7 +169,7 @@ class CriticalGridGUI:
             self.message = f"{building.name} priority set to {next_priority.value.upper()}."
 
     def _buy_wave_intel(self) -> None:
-        """Buy the core's current-wave briefing and report the actual charge."""
+        """Unlock this wave's detail and report the gold change from fresh snapshots."""
         self._cancel_build()
         before = self.game.snapshot().status
         try:
@@ -173,8 +177,15 @@ class CriticalGridGUI:
         except ValueError as error:
             self.message = str(error)
         else:
-            spent = before.gold - self.game.snapshot().status.gold
-            self.message = f"Wave intel (-{spent} gold): {briefing}" if spent else briefing
+            after = self.game.snapshot()
+            spent = before.gold - after.status.gold
+            if spent:
+                self.message = f"Detailed intel unlocked (-{spent} gold)."
+            elif after.status.detailed_intel is not None:
+                self.message = "Detailed intel available below the map."
+            else:
+                self.message = briefing
+            self.intel.update(after)
 
     def _take_core_overdraft(self) -> None:
         """Apply the default core overdraft and report its resource changes."""
@@ -498,6 +509,7 @@ class CriticalGridGUI:
                     self.sidebar.update_actions(
                         snapshot, self._selected_building(snapshot), self.targeting_mode,
                     )
+                    self.intel.update(snapshot)
                     hover = (
                         self.board.position_at(pygame.mouse.get_pos(), snapshot)
                         if not snapshot.status.is_finished else None
@@ -524,6 +536,7 @@ class CriticalGridGUI:
                         snapshot, self.selected_kind, self.inspected_position,
                         self._selected_enemy(snapshot), self.targeting_mode,
                     )
+                    self.intel.draw()
                     self.hud.draw_message(display_message)
                     self.manager.draw_ui(self.screen)
                 else:

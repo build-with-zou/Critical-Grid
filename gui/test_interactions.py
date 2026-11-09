@@ -20,6 +20,7 @@ from grid_td.levels import load_demo_level
 from grid_td.map import create_demo_map
 from grid_td.position import Position
 from gui.gui import CriticalGridGUI
+from gui.intel_view import detail_lines, overview_lines
 from gui.sidebar import Sidebar
 from gui.styles import BOARD_LEFT, BOARD_TOP, CELL, LIMITED_COLOR
 
@@ -33,6 +34,103 @@ class BuildingInteractionTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         pygame.quit()
+
+    def test_intel_button_tracks_level_price_and_charges_once(self) -> None:
+        level = load_demo_level()
+        self.gui.game = GameState.from_level(replace(level, intel_price=12))
+        button = self.gui.sidebar.intel_button
+        before = self.gui.game.snapshot()
+        self.gui.sidebar.update_actions(before, None)
+        self.assertEqual(button.text, "Wave Intel (12g)")
+        self.assertIn("12 gold", button.tool_tip_text)
+        self.gui._handle_button(button)
+        after = self.gui.game.snapshot()
+        self.assertEqual(before.status.gold - after.status.gold, 12)
+        self.assertIsNotNone(after.status.detailed_intel)
+        self.assertIn("-12 gold", self.gui.message)
+        self.assertIn("Estimated duration", self.gui.intel.details.html_text)
+        self.gui.sidebar.update_actions(after, None)
+        self.assertEqual(button.text, "Intel Unlocked")
+        self.gui._handle_button(button)
+        self.assertEqual(self.gui.game.snapshot().status.gold, after.status.gold)
+
+    def test_intel_overview_and_detail_pages_use_map_entrance_numbers(self) -> None:
+        level = load_demo_level()
+        self.gui.game = GameState.from_level(replace(level, waves=(level.waves[-1],)))
+        before = self.gui.game.snapshot()
+        overview = "\n".join(overview_lines(before))
+        for label in ("Wave 8", "Threat: High", "Saboteur", "Traits:", "Entrances: E1, E2",
+                      level.waves[-1].briefing):
+            self.assertIn(label, overview)
+        self.assertIsNone(before.status.detailed_intel)
+        self.assertNotIn("Estimated duration", "\n".join(detail_lines(before)))
+        self.assertNotIn("Spawn window", overview)
+        self.gui._handle_button(self.gui.sidebar.intel_button)
+        after = self.gui.game.snapshot()
+        details = after.status.detailed_intel
+        self.assertIn(f"{details.total_enemies} enemies", self.gui.intel.details.html_text)
+        for group in details.groups:
+            self.assertIn(f"{group.count} × {group.enemy_name}  E{group.entrance_index + 1}",
+                          self.gui.intel.details.html_text)
+        self.gui._handle_button(self.gui.intel.timeline_button)
+        first, last = details.spawn_timeline[0], details.spawn_timeline[-1]
+        for spawn in (first, last):
+            self.assertIn(f"{spawn.at_seconds:g}s  {spawn.enemy_name}  E{spawn.entrance_index + 1}",
+                          self.gui.intel.details.html_text)
+        self.assertTrue(self.gui.intel.timeline_button.is_selected)
+        self.gui._handle_button(self.gui.intel.groups_button)
+        self.assertIn("Interval", self.gui.intel.details.html_text)
+
+    def test_intel_remains_available_at_night_and_resets_after_settlement(self) -> None:
+        self.gui.game.start_next_wave()
+        night = self.gui.game.snapshot()
+        self.gui.sidebar.update_actions(night, None)
+        self.assertTrue(self.gui.sidebar.intel_button.is_enabled)
+        self.gui._handle_button(self.gui.sidebar.intel_button)
+        self.gui._handle_button(self.gui.intel.timeline_button)
+        self.gui.game.step(30.0)
+        self.gui.game.end_wave()
+        next_wave = self.gui.game.snapshot()
+        self.gui.sidebar.update_actions(next_wave, None)
+        self.gui.intel.update(next_wave)
+        self.assertIn("Wave 2", self.gui.intel.overview.html_text)
+        self.assertIsNone(next_wave.status.detailed_intel)
+        self.assertFalse(self.gui.intel.timeline_button.visible)
+        self.assertNotIn("Estimated duration", self.gui.intel.details.html_text)
+        self.assertIn(f"{next_wave.status.intel_price}g", self.gui.sidebar.intel_button.text)
+
+    def test_zero_price_and_insufficient_gold_use_core_purchase_results(self) -> None:
+        level = load_demo_level()
+        button = self.gui.sidebar.intel_button
+        for price in (0, 12):
+            with self.subTest(price=price):
+                self.gui.game = GameState.from_level(replace(level, intel_price=price, starting_gold=0))
+                before = self.gui.game.snapshot()
+                self.gui.sidebar.update_actions(before, None)
+                if price == 0:
+                    self.assertEqual(button.text, "Wave Intel (Free)")
+                self.gui._handle_button(button)
+                after = self.gui.game.snapshot()
+                self.assertEqual(after.status.gold, before.status.gold)
+                if price == 0:
+                    self.assertIsNotNone(after.status.detailed_intel)
+                else:
+                    self.assertIsNone(after.status.detailed_intel)
+                    self.assertIn("Not enough gold", self.gui.message)
+
+    def test_purchase_control_disabled_without_wave_or_after_core_destruction(self) -> None:
+        before = self.gui.game.snapshot()
+        button = self.gui.sidebar.intel_button
+        for changes in ({"free_intel": None}, {"core_hp": 0}, {"is_finished": True}):
+            with self.subTest(changes=changes):
+                snapshot = replace(before, status=replace(before.status, **changes))
+                self.gui.sidebar.update_actions(snapshot, None)
+                self.gui.intel.update(snapshot)
+                self.assertFalse(button.is_enabled)
+                self.assertFalse(self.gui.intel.timeline_button.visible)
+                if snapshot.status.free_intel is None:
+                    self.assertEqual(button.text, "No Wave Intel")
+                    self.assertIn("No incoming wave.", self.gui.intel.overview.html_text)
 
     def click_cell(self, position: Position) -> None:
         """Send a map click through the same pixel-to-cell path as player input."""
