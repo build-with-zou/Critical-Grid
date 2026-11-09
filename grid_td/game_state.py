@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from math import isfinite
+from math import floor, isfinite
 from typing import TYPE_CHECKING, ClassVar
 
 from grid_td.buildings import (
@@ -297,6 +297,8 @@ class GameState:
 
     # Fraction of build cost refunded by sell_building(); the core is never sold.
     SELL_REFUND_RATIO: ClassVar[float] = 0.7
+    FIXED_STEP_SECONDS: ClassVar[float] = 0.05
+    TIME_EPSILON: ClassVar[float] = 1e-9
 
     grid_map: GridMap
     intel_price: int = 8  # Detailed-intel price, normally set from the level.
@@ -1328,16 +1330,43 @@ class GameState:
         )
 
     def step(self, seconds: float) -> None:
-        """Advance one NIGHT time step; freeze simulation during DAY.
+        """Advance the simulation using fixed-size logical slices.
+
+        A public call may use any finite duration, but all gameplay systems see
+        slices no larger than ``FIXED_STEP_SECONDS``. Whole slices always use
+        exactly ``FIXED_STEP_SECONDS``; a final remainder advances the exact
+        leftover time. This makes combat, spawning and movement independent of
+        the caller's frame size, so ``step(1.0)`` matches twenty ``step(0.05)``
+        calls with the same sub-step sequence.
+        """
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            raise ValueError("Step duration must be a finite non-negative number.")
+        try:
+            duration = float(seconds)
+        except OverflowError:
+            raise ValueError("Step duration must be a finite non-negative number.") from None
+        if not isfinite(duration) or duration < 0:
+            raise ValueError("Step duration must be a finite non-negative number.")
+
+        self._last_events = ()
+        if duration == 0:
+            self._step_once(0.0)
+            return
+
+        full_steps = floor(duration / self.FIXED_STEP_SECONDS + self.TIME_EPSILON)
+        for _ in range(full_steps):
+            self._step_once(self.FIXED_STEP_SECONDS)
+        remainder = duration - full_steps * self.FIXED_STEP_SECONDS
+        if remainder > self.TIME_EPSILON:
+            self._step_once(remainder)
+
+    def _step_once(self, delta: float) -> None:
+        """Advance one already-validated fixed logical slice.
 
         Args:
-            seconds: Finite, non-negative logical seconds to advance. Zero is
+            delta: Non-negative logical seconds for this slice. ``step()``
+                guarantees it never exceeds ``FIXED_STEP_SECONDS``; zero is
                 allowed so callers can process night events scheduled at zero.
-
-        Raises:
-            ValueError: If `seconds` is a boolean, not numeric, negative,
-                non-finite, or too large to represent as a float. Rejected
-                calls leave the game state unchanged.
 
         Order:
             Spawn due enemies first, recalculate power, run tower attacks,
@@ -1348,32 +1377,20 @@ class GameState:
         Side effects:
             Changes the shared logical clock, wave runner state, building
             cooldowns, enemy health and positions, gold, and core health. The
-            exact same `seconds` delta is passed to every time-dependent
-            subsystem, so the GameState clock remains the single simulation
-            time source.
+            same ``delta`` is passed to every time-dependent subsystem, so the
+            GameState clock remains the single simulation time source.
 
-        DAY and finished games accept valid durations without advancing the
-        clock, cooldowns, overload/slow timers, or spawning. Validate the input
-        first so invalid durations still raise during planning or after a result.
+        DAY and finished games leave the clock, cooldowns, overload/slow
+        timers, and spawning unchanged. Public input validation belongs to
+        ``step()`` so invalid requests are rejected before this method runs.
         """
-        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
-            raise ValueError("Step duration must be a finite non-negative number.")
-        try:
-            delta = float(seconds)
-        except OverflowError:
-            raise ValueError("Step duration must be a finite non-negative number.") from None
-        if not isfinite(delta) or delta < 0:
-            raise ValueError("Step duration must be a finite non-negative number.")
-
         if self.is_finished:
             return
 
         # A destroyed core takes precedence over planning or further combat.
         # This also handles states constructed with zero starting health.
         if self.core_hp <= 0:
-            self.core_hp = 0
-            self.phase = GamePhase.DEFEAT
-            self.result_message = "Defeat. The core was destroyed."
+            self._enter_defeat()
             return
         if self.phase == GamePhase.DAY:
             return
@@ -1660,10 +1677,11 @@ class GameState:
     def _towers_attack(self, seconds: float) -> None:
         """Tick tower timers, run available attacks, and settle kill rewards.
 
-        Each tower can attack at most once per time step; this method does not
-        replay extra attacks that would have occurred inside a large step.
-        Rewards are paid immediately at the end of the attack phase, and dead
-        enemies are removed here so they do not enter the movement phase.
+        Each tower can attack at most once per fixed logical sub-step; large
+        public steps are split by :meth:`step`, so the full attack cadence is
+        preserved. Rewards are paid immediately at the end of the attack phase,
+        and dead enemies are removed here so they do not enter the movement
+        phase.
         """
         for building in self.buildings:
             if not isinstance(building, Tower):

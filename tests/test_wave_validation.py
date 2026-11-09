@@ -105,7 +105,9 @@ class WaveValidationTest(unittest.TestCase):
         self.game.step(30.0)
 
         self.assertTrue(self.game.is_finished)
-        self.assertFalse(self.game.enemies)
+        # Fixed-step defeat can occur mid-step, so surviving enemies stay on
+        # the board while settlement and restart remain rejected.
+        self.assertTrue(self.game.enemies)
         self.assertFalse(self.game.waiting_for_next_wave)
         self.assert_rejected_without_changes(self.game.end_wave)
         self.assert_rejected_without_changes(self.game.start_next_wave)

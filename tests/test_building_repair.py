@@ -302,7 +302,9 @@ class BuildingRepairTest(unittest.TestCase):
 
     def test_settlement_keeps_hp_damage_and_overload_service_fee_separate(self) -> None:
         game = self.game
-        tower = game.build("gun_tower", Position(30, 6))
+        # Keep the tower outside enemy attack range so this test observes
+        # settlement accounting rather than fixed-step combat damage.
+        tower = game.build("gun_tower", Position(0, 3))
         game.overload_tower(tower.id)
         tower.take_damage(2)
         game.repair_building(tower.id)
