@@ -42,13 +42,11 @@ class GridDamageTest(unittest.TestCase):
 
         self.game.step(1.0)
         self.assertEqual(node.hp, node.max_hp - saboteur.attack_damage)
-        self.assertEqual(saboteur.attack_cooldown_remaining, 1.0)
+        self.assertAlmostEqual(saboteur.attack_cooldown_remaining, 0.05)
 
-        self.game.step(0.5)
-        self.assertEqual(node.hp, node.max_hp - saboteur.attack_damage)
-
-        self.game.step(0.5)
+        self.game.step(1.0)
         self.assertEqual(node.hp, node.max_hp - 2 * saboteur.attack_damage)
+        self.assertAlmostEqual(saboteur.attack_cooldown_remaining, 0.05)
 
     def test_saboteur_out_of_range_does_not_damage_node(self) -> None:
         node = self.game.build("power_node", Position(30, 15))

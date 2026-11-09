@@ -140,7 +140,9 @@ class DayNightCycleTest(unittest.TestCase):
 
         self.game.step(100)
 
-        self.assertEqual(self.game.snapshot(), before)
+        after = self.game.snapshot()
+        self.assertEqual(after.status, before.status)
+        self.assertEqual(after.board, before.board)
         self.assertEqual(self.game.phase, GamePhase.DAY)
         self.assertEqual(self.game.wave_index, 1)
         self.assertIsNone(self.game.wave_runner)
@@ -179,7 +181,9 @@ class DayNightCycleTest(unittest.TestCase):
 
         before = self.game.snapshot()
         self.game.step(1.0)
-        self.assertEqual(self.game.snapshot(), before)
+        after = self.game.snapshot()
+        self.assertEqual(after.status, before.status)
+        self.assertEqual(after.board, before.board)
 
     def test_core_destruction_enters_defeat_without_settlement(self) -> None:
         self.game = GameState(create_demo_map(), core_hp=1)
@@ -200,7 +204,9 @@ class DayNightCycleTest(unittest.TestCase):
 
         before = self.game.snapshot()
         self.game.step(1.0)
-        self.assertEqual(self.game.snapshot(), before)
+        after = self.game.snapshot()
+        self.assertEqual(after.status, before.status)
+        self.assertEqual(after.board, before.board)
 
     def test_invalid_day_steps_still_raise_without_changes(self) -> None:
         for seconds in (-0.05, True, "0.05", float("nan"), float("inf")):

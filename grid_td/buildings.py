@@ -17,6 +17,14 @@ from typing import ClassVar
 from grid_td.position import Footprint, LEGACY_TILE_SIZE, Position, WorldPosition
 
 
+TIME_EPSILON: float = 1e-9
+
+
+def _snap_time(value: float) -> float:
+    """Clamp tiny positive timer residue to zero for stable fixed-step boundaries."""
+    return 0.0 if value <= TIME_EPSILON else value
+
+
 class PowerPriority(str, Enum):
     """Priority used when connected demand exceeds available supply."""
 
@@ -306,8 +314,12 @@ class Tower(Building):
 
     def tick_cooldown(self, seconds: float) -> None:
         """Advance attack cooldown and overload timers without going below zero."""
-        self.cooldown_remaining = max(0.0, self.cooldown_remaining - seconds)
-        self.overload_seconds_remaining = max(0.0, self.overload_seconds_remaining - seconds)
+        self.cooldown_remaining = _snap_time(
+            max(0.0, self.cooldown_remaining - seconds)
+        )
+        self.overload_seconds_remaining = _snap_time(
+            max(0.0, self.overload_seconds_remaining - seconds)
+        )
 
     def can_attack(self) -> bool:
         """Return whether the tower satisfies the basic attack conditions."""
@@ -315,7 +327,7 @@ class Tower(Building):
             not self.is_destroyed
             and self.connected_to_grid
             and self.efficiency > 0
-            and self.cooldown_remaining <= 0
+            and self.cooldown_remaining <= TIME_EPSILON
         )
 
     def current_damage(self) -> float:

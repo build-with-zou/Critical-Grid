@@ -23,6 +23,14 @@ from grid_td.path import RoutePath
 from grid_td.position import LEGACY_TILE_SIZE, Position, WorldPosition
 
 
+TIME_EPSILON: float = 1e-9
+
+
+def _snap_time(value: float) -> float:
+    """Clamp tiny positive timer residue to zero for stable fixed-step boundaries."""
+    return 0.0 if value <= TIME_EPSILON else value
+
+
 @dataclass
 class Enemy:
     """Enemy state that towers can attack while it moves along its active route."""
@@ -76,7 +84,7 @@ class Enemy:
     @property
     def is_slowed(self) -> bool:
         """Return whether the enemy is still inside a slow-effect window."""
-        return self.slow_seconds_remaining > 0
+        return self.slow_seconds_remaining > TIME_EPSILON
 
     def current_speed(self) -> float:
         """Return current movement speed, using a fixed 55% multiplier when slowed."""
@@ -107,7 +115,7 @@ class Enemy:
         return (
             self.attack_damage > 0
             and self.attack_range > 0
-            and self.attack_cooldown_remaining <= 0
+            and self.attack_cooldown_remaining <= TIME_EPSILON
         )
 
     @property
@@ -121,13 +129,13 @@ class Enemy:
         return (
             self.breach_damage > 0
             and self.attack_range > 0
-            and self.breach_cooldown_remaining <= 0
+            and self.breach_cooldown_remaining <= TIME_EPSILON
         )
 
     def tick_breach_cooldown(self, seconds: float) -> None:
         """Advance the breach cooldown without going below zero."""
-        self.breach_cooldown_remaining = max(
-            0.0, self.breach_cooldown_remaining - seconds
+        self.breach_cooldown_remaining = _snap_time(
+            max(0.0, self.breach_cooldown_remaining - seconds)
         )
 
     def reset_breach_cooldown(self) -> None:
@@ -136,8 +144,8 @@ class Enemy:
 
     def tick_attack_cooldown(self, seconds: float) -> None:
         """Advance the building-attack cooldown without going below zero."""
-        self.attack_cooldown_remaining = max(
-            0.0, self.attack_cooldown_remaining - seconds
+        self.attack_cooldown_remaining = _snap_time(
+            max(0.0, self.attack_cooldown_remaining - seconds)
         )
 
     def reset_attack_cooldown(self) -> None:
@@ -152,7 +160,9 @@ class Enemy:
         escape should be settled.
         """
         self.path_progress += self.current_speed() * seconds
-        self.slow_seconds_remaining = max(0.0, self.slow_seconds_remaining - seconds)
+        self.slow_seconds_remaining = _snap_time(
+            max(0.0, self.slow_seconds_remaining - seconds)
+        )
 
     def world_position_on_route(self, path: RoutePath) -> WorldPosition:
         """Sample continuous position using traveled distance, not a route index."""
