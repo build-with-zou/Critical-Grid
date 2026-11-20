@@ -108,6 +108,7 @@ class BoardView:
         hover_position: Position | None,
         preview: BuildPreview | None,
         selected_enemy_id: int | None = None,
+        selected_power_preview: BuildPreview | None = None,
     ) -> None:
         """Layer snapshot routes and power links under units and selection outlines."""
         board_rect = pygame.Rect(
@@ -146,6 +147,16 @@ class BoardView:
         elif selected is not None:
             if selected.range is not None:
                 self._draw_range(snapshot, selected)
+            if selected_power_preview is not None and selected.hp > 0:
+                radius = selected_power_preview.power_radius
+                if radius is not None:
+                    color = UNCHARGED_COLOR
+                    if selected.connected_to_grid:
+                        color = (
+                            POWER_RANGE_COLOR if selected.transmission_efficiency >= 1
+                            else LIMITED_COLOR
+                        )
+                    self._draw_power_range(snapshot, selected.center, radius, color)
         if enemy is not None and len(enemy.path) > 1:
             points = [self._world_point(point, snapshot) for point in enemy.path]
             pygame.draw.lines(self.screen, ENEMY_ROUTE_COLOR, False, points, 2)
@@ -171,7 +182,13 @@ class BoardView:
             )
         if preview is not None:
             self._draw_preview(preview, board_rect)
-        self._draw_legend(preview, selected, enemy)
+        if (
+            (preview is not None and preview.power_radius is not None)
+            or (selected_power_preview is not None and selected is not None and selected.hp > 0)
+        ):
+            for building in buildings.values():
+                self._draw_center(self._world_point(building.center, snapshot))
+        self._draw_legend(preview, selected, enemy, selected_power_preview)
 
     def _draw_entrances(self, snapshot: GameSnapshot) -> None:
         """Number spawn markers in level order using the same labels as enemy details."""
@@ -213,6 +230,7 @@ class BoardView:
     def _draw_legend(
         self, preview: BuildPreview | None, selected: BuildingSnapshot | None,
         enemy: EnemySnapshot | None,
+        selected_power_preview: BuildPreview | None = None,
     ) -> None:
         """Explain the active overlay and distinguish potential reach from connectivity."""
         for x, label, color in (
@@ -231,11 +249,28 @@ class BoardView:
             label, color = "Enemy route (purple)  |  Attack target (red)  |  Breach target (amber)", ENEMY_ROUTE_COLOR
         elif selected is not None:
             label, color = "Direct power links: full transmission (green) or reduced (amber).", POWER_RANGE_COLOR
+            if selected.range is not None:
+                state = "POWERED" if selected.efficiency > 0 else "NO POWER"
+                if not selected.connected_to_grid:
+                    state = "OFF GRID"
+                if selected.hp <= 0:
+                    state = "DESTROYED"
+                label, color = f"Attack range {selected.range:g} | Center to target | {state}", ATTACK_RANGE_COLOR
+            if selected_power_preview is not None and selected_power_preview.power_radius is not None:
+                radius = selected_power_preview.power_radius
+                state = "CONNECTED" if selected.connected_to_grid else "OFF GRID"
+                if selected.hp <= 0:
+                    label, color = "DESTROYED: this building cannot relay power.", UNCHARGED_COLOR
+                else:
+                    label = f"Power reach {radius:g} | + marks building centers | {state}"
+                    color = UNCHARGED_COLOR
+                    if selected.connected_to_grid:
+                        color = POWER_RANGE_COLOR if selected.transmission_efficiency >= 1 else LIMITED_COLOR
         if preview is not None:
             power_radius = getattr(preview, "power_radius", None)
             attack_range = getattr(preview, "attack_range", None)
             if power_radius is not None:
-                label = f"Power reach: {power_radius:g} world units; requires a grid connection."
+                label = f"Power reach {power_radius:g} | + marks building centers | Grid connection required"
                 color = POWER_RANGE_COLOR
             elif attack_range is not None:
                 label = f"Attack range: {attack_range:g} world units; requires power to attack."
@@ -259,15 +294,49 @@ class BoardView:
         center = getattr(preview, "center", None)
         if center is None:
             return
-        for radius, color in (
-            (getattr(preview, "power_radius", None), POWER_RANGE_COLOR),
-            (getattr(preview, "attack_range", None), ATTACK_RANGE_COLOR),
+        power_radius = getattr(preview, "power_radius", None)
+        if power_radius is not None:
+            self._draw_power_range(
+                snapshot, center, power_radius,
+                POWER_RANGE_COLOR if preview.is_valid else UNCHARGED_COLOR,
+            )
+        attack_range = getattr(preview, "attack_range", None)
+        if attack_range is not None:
+            self._draw_range_cells(
+                snapshot, center, attack_range,
+                ATTACK_RANGE_COLOR if preview.is_valid else UNCHARGED_COLOR,
+            )
+
+    def _draw_power_range(
+        self, snapshot: GameSnapshot, center: WorldPosition, radius: float,
+        color: tuple[int, int, int],
+    ) -> None:
+        """Draw the exact center-distance boundary without expanding whole edge cells."""
+        if snapshot.distance_metric != "manhattan":
+            self._draw_range_cells(snapshot, center, radius, color)
+            return
+        overlay = pygame.Surface((snapshot.width * CELL, snapshot.height * CELL), pygame.SRCALPHA)
+        points = []
+        for position in (
+            WorldPosition(center.x - radius, center.y),
+            WorldPosition(center.x, center.y - radius),
+            WorldPosition(center.x + radius, center.y),
+            WorldPosition(center.x, center.y + radius),
         ):
-            if radius is not None:
-                self._draw_range_cells(
-                    snapshot, center, radius,
-                    color if preview.is_valid else UNCHARGED_COLOR,
-                )
+            x, y = self._world_point(position, snapshot)
+            points.append((x - BOARD_LEFT, y - BOARD_TOP))
+        pygame.draw.polygon(overlay, (*color, 60), points)
+        pygame.draw.polygon(overlay, color, points, 1)
+        # A board-sized surface clips all four sides and leaves the caller's clip intact.
+        self.screen.blit(overlay, (BOARD_LEFT, BOARD_TOP))
+
+    def _draw_center(self, point: tuple[int, int]) -> None:
+        """Mark the geometric point used by the core's power-distance comparison."""
+        x, y = point
+        pygame.draw.line(self.screen, BACKGROUND, (x - 4, y), (x + 4, y), 3)
+        pygame.draw.line(self.screen, BACKGROUND, (x, y - 4), (x, y + 4), 3)
+        pygame.draw.line(self.screen, TEXT, (x - 3, y), (x + 3, y))
+        pygame.draw.line(self.screen, TEXT, (x, y - 3), (x, y + 3))
 
     @staticmethod
     def _range_cells(
@@ -399,6 +468,8 @@ class BoardView:
         self.screen.set_clip(board_rect.clip(previous_clip))
         self.screen.blit(overlay, rect.topleft)
         pygame.draw.rect(self.screen, color, rect, 3)
+        # The mouse chooses the top-left anchor, while power checks this center.
+        self._draw_center(rect.center)
         self.screen.set_clip(previous_clip)
 
     @staticmethod
