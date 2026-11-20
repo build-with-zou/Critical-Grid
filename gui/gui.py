@@ -506,8 +506,9 @@ class CriticalGridGUI:
                 if self.view == "game":
                     snapshot = self.game.snapshot()
                     self._refresh_selection(snapshot)
+                    selected = self._selected_building(snapshot)
                     self.sidebar.update_actions(
-                        snapshot, self._selected_building(snapshot), self.targeting_mode,
+                        snapshot, selected, self.targeting_mode,
                     )
                     self.intel.update(snapshot)
                     hover = (
@@ -522,6 +523,15 @@ class CriticalGridGUI:
                             f"Click to place {self.selected_kind.replace('_', ' ')}."
                             if preview.is_valid else f"Cannot place: {preview.reason}"
                         )
+                    selected_power_preview = None
+                    if (
+                        preview is None and selected is not None
+                        and selected.kind in ("core", "power_node", "power_plant")
+                    ):
+                        # Occupied placement is invalid, but the public preview still quotes geometry.
+                        # All transmitters share the grid radius; the core has no build command.
+                        kind = "power_node" if selected.kind == "core" else selected.kind
+                        selected_power_preview = self.game.preview_build(kind, selected.position)
                     self.manager.update(dt)
                     self.screen.fill(BACKGROUND)
                     self.hud.draw_status(
@@ -531,6 +541,7 @@ class CriticalGridGUI:
                         snapshot, self.selected_building_id,
                         self.inspected_position, hover, preview,
                         self.selected_enemy_id,
+                        selected_power_preview,
                     )
                     self.sidebar.draw(
                         snapshot, self.selected_kind, self.inspected_position,

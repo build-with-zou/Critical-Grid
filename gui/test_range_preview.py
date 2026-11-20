@@ -12,16 +12,16 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
-from grid_td.buildings import GunTower
+from grid_td.buildings import GunTower, PowerNode
 from grid_td.game_state import BuildPreview, GameState
-from grid_td.map import create_demo_map
-from grid_td.position import Footprint, Position, WorldPosition
+from grid_td.map import GridMap, create_demo_map
+from grid_td.position import Footprint, Position, WorldPosition, world_distance
 from grid_td.power_grid import PowerGrid
 from gui.board_view import BoardView
 from gui.gui import CriticalGridGUI
 from gui.styles import (
     ATTACK_RANGE_COLOR, BACKGROUND, BOARD_LEFT, BOARD_TOP, CELL,
-    POWER_RANGE_COLOR, UNCHARGED_COLOR, WINDOW_SIZE,
+    POWER_RANGE_COLOR, UNCHARGED_COLOR, WINDOW_SIZE, LIMITED_COLOR,
 )
 
 
@@ -57,11 +57,11 @@ class RangeDrawingTest(unittest.TestCase):
         )))
 
     def test_node_and_tower_ranges_have_distinct_colors(self) -> None:
-        for preview, color in (
-            (self.preview(), POWER_RANGE_COLOR),
-            (self.preview(power_radius=None, attack_range=9.0), ATTACK_RANGE_COLOR),
+        for preview, color, method in (
+            (self.preview(), POWER_RANGE_COLOR, "_draw_power_range"),
+            (self.preview(power_radius=None, attack_range=9.0), ATTACK_RANGE_COLOR, "_draw_range_cells"),
         ):
-            with self.subTest(color=color), patch.object(self.board, "_draw_range_cells") as draw:
+            with self.subTest(color=color), patch.object(self.board, method) as draw:
                 self.board._draw_build_range(self.snapshot, preview)
                 draw.assert_called_once_with(
                     self.snapshot, preview.center,
@@ -71,12 +71,15 @@ class RangeDrawingTest(unittest.TestCase):
 
     def test_invalid_placement_keeps_coverage_visible_in_red(self) -> None:
         preview = self.preview(is_valid=False, reason="Not enough gold.")
-        with patch.object(self.board, "_draw_range_cells") as draw:
+        with patch.object(self.board, "_draw_power_range") as draw:
             self.board._draw_build_range(self.snapshot, preview)
             draw.assert_called_once_with(self.snapshot, preview.center, 6.0, UNCHARGED_COLOR)
 
     def test_legacy_previews_and_non_transmitters_have_no_invented_range(self) -> None:
-        with patch.object(self.board, "_draw_range_cells") as draw:
+        with (
+            patch.object(self.board, "_draw_range_cells") as draw,
+            patch.object(self.board, "_draw_power_range") as power,
+        ):
             self.board._draw_build_range(
                 self.snapshot, BuildPreview(
                     "power_node", Position(30, 9), 3, 3, (), True, "",
@@ -84,10 +87,11 @@ class RangeDrawingTest(unittest.TestCase):
             )
             self.board._draw_build_range(self.snapshot, self.preview(power_radius=None))
             draw.assert_not_called()
+            power.assert_not_called()
 
     def test_off_board_coverage_stays_inside_the_map(self) -> None:
         self.screen.fill(BACKGROUND)
-        self.board._draw_range_cells(self.snapshot, WorldPosition(0.5, 0.5), 6.0, POWER_RANGE_COLOR)
+        self.board._draw_power_range(self.snapshot, WorldPosition(0.5, 0.5), 6.0, POWER_RANGE_COLOR)
         self.assertEqual(tuple(self.screen.get_at((BOARD_LEFT - 1, BOARD_TOP)))[:3], BACKGROUND)
         self.assertEqual(tuple(self.screen.get_at((BOARD_LEFT, BOARD_TOP - 1)))[:3], BACKGROUND)
         self.assertNotEqual(tuple(self.screen.get_at((BOARD_LEFT + 5, BOARD_TOP + 5)))[:3], BACKGROUND)
@@ -129,12 +133,119 @@ class RangeDrawingTest(unittest.TestCase):
                     patch("pygame.mouse.get_pos", return_value=mouse),
                     patch("pygame.quit"),
                     patch.object(gui.board, "_draw_range_cells", wraps=gui.board._draw_range_cells) as draw,
+                    patch.object(gui.board, "_draw_power_range", wraps=gui.board._draw_power_range) as power,
                 ):
                     gui.run(max_frames=1)
-                    draw.assert_called_once()
-                    self.assertEqual(draw.call_args.args[1], WorldPosition(31.5, 10.5))
-                    self.assertEqual(draw.call_args.args[2], 6.0)
+                    active = power if kind == "power_node" else draw
+                    active.assert_called_once()
+                    self.assertEqual(active.call_args.args[1], WorldPosition(31.5, 10.5))
+                    self.assertEqual(active.call_args.args[2], 6.0)
                 self.assertEqual(gui.game.snapshot(), before)
+
+    def test_power_boundary_does_not_color_the_extra_half_cell(self) -> None:
+        center = WorldPosition(16.5, 10.5)
+        self.screen.fill(BACKGROUND)
+        self.board._draw_power_range(self.snapshot, center, 6.0, POWER_RANGE_COLOR)
+        for point in (WorldPosition(22.75, 10.5), WorldPosition(10.25, 10.5),
+                      WorldPosition(19.75, 13.75)):
+            with self.subTest(point=point):
+                self.assertGreater(world_distance(center, point), 6.0)
+                pixel = self.board._world_point(point, self.snapshot)
+                self.assertEqual(tuple(self.screen.get_at(pixel))[:3], BACKGROUND)
+        for point in (WorldPosition(22.5, 10.5), WorldPosition(16.5, 4.5),
+                      WorldPosition(19.25, 13.25)):
+            with self.subTest(point=point):
+                pixel = self.board._world_point(point, self.snapshot)
+                self.assertNotEqual(tuple(self.screen.get_at(pixel))[:3], BACKGROUND)
+
+    def test_power_boundary_matches_actual_consumers_with_different_footprints(self) -> None:
+        grid = GridMap(
+            width=30, height=24, route=(Position(0, 22), Position(29, 22)),
+            core_position=Position(2, 10), mine_positions=frozenset(),
+            high_ground_positions=frozenset(), illegal_ground_positions=frozenset(),
+        )
+        for footprint in (Footprint(3, 3), Footprint(2, 4)):
+            for anchor in (Position(14, 10), Position(14, 11), Position(8, 4), Position(8, 3)):
+                with self.subTest(footprint=footprint, anchor=anchor):
+                    game = GameState(grid)
+                    node = game.build("power_node", Position(8, 10))
+                    with patch.object(GunTower, "FOOTPRINT", footprint):
+                        tower = game.build("gun_tower", anchor)
+                    snapshot = game.snapshot()
+                    before = snapshot
+                    radius = game.preview_build("power_node", node.position).power_radius
+                    self.screen.fill(BACKGROUND)
+                    self.board._draw_power_range(snapshot, node.center, radius, POWER_RANGE_COLOR)
+                    pixel = self.board._world_point(tower.center, snapshot)
+                    highlighted = tuple(self.screen.get_at(pixel))[:3] != BACKGROUND
+                    self.assertEqual(highlighted, tower.connected_to_grid)
+                    self.assertEqual(highlighted, world_distance(node.center, tower.center) <= radius)
+                    self.assertEqual(game.snapshot(), before)
+
+    def test_click_built_transmitters_and_tower_shows_their_configured_ranges(self) -> None:
+        gui = CriticalGridGUI()
+        gui.view = "game"
+        gui.game.power_grid = PowerGrid(connection_radius=4.5)
+        gui.game.build("power_node", Position(30, 6))
+        gui.game.build("power_plant", Position(24, 3))
+        gui.game.build("gun_tower", Position(30, 10))
+        for anchor in (Position(30, 3), Position(30, 6), Position(24, 3), Position(30, 10)):
+            with self.subTest(anchor=anchor):
+                gui._handle_board_click((BOARD_LEFT + anchor.x * CELL + 2, BOARD_TOP + anchor.y * CELL + 2))
+                snapshot = gui.game.snapshot()
+                selected = gui._selected_building(snapshot)
+                with (
+                    patch("pygame.quit"),
+                    patch.object(gui.board, "_draw_power_range", wraps=gui.board._draw_power_range) as power,
+                    patch.object(gui.board, "_draw_range_cells", wraps=gui.board._draw_range_cells) as attack,
+                ):
+                    gui.run(max_frames=1)
+                    draw = attack if selected.kind == "gun_tower" else power
+                    draw.assert_called_once()
+                    self.assertEqual(draw.call_args.args[1], selected.center)
+                    self.assertEqual(draw.call_args.args[2], selected.range if selected.range else 4.5)
+                self.assertEqual(gui.game.snapshot(), snapshot)
+
+    def test_selected_node_retains_radius_when_damaged_and_marks_inactive_states(self) -> None:
+        gui = CriticalGridGUI()
+        gui.view = "game"
+        for state, anchor, color in (
+            ("damaged", Position(30, 6), LIMITED_COLOR),
+            ("off-grid", Position(12, 12), UNCHARGED_COLOR),
+            ("destroyed", Position(30, 6), None),
+        ):
+            with self.subTest(state=state):
+                node = PowerNode(50, anchor)
+                if state == "damaged":
+                    node.take_damage(node.hp // 2)
+                elif state == "destroyed":
+                    node.take_damage(node.hp)
+                gui.game = GameState(create_demo_map(), buildings=[node])
+                gui._handle_board_click((BOARD_LEFT + anchor.x * CELL + 2, BOARD_TOP + anchor.y * CELL + 2))
+                with (
+                    patch("pygame.quit"),
+                    patch.object(gui.board, "_draw_power_range", wraps=gui.board._draw_power_range) as draw,
+                    patch.object(gui.board, "legend_font", wraps=gui.board.legend_font) as legend,
+                ):
+                    gui.run(max_frames=1)
+                    if color is None:
+                        draw.assert_not_called()
+                        self.assertTrue(any("DESTROYED" in call.args[0] for call in legend.render.call_args_list))
+                    else:
+                        draw.assert_called_once()
+                        self.assertEqual(draw.call_args.args[2:], (6.0, color))
+
+    def test_power_range_respects_zero_radius_and_existing_screen_clip(self) -> None:
+        self.screen.fill(BACKGROUND)
+        center = WorldPosition(16.5, 10.5)
+        pixel = self.board._world_point(center, self.snapshot)
+        self.board._draw_power_range(self.snapshot, center, 0.0, POWER_RANGE_COLOR)
+        self.assertNotEqual(tuple(self.screen.get_at(pixel))[:3], BACKGROUND)
+        self.assertEqual(tuple(self.screen.get_at((pixel[0] + 1, pixel[1])))[:3], BACKGROUND)
+        clip = pygame.Rect(BOARD_LEFT, BOARD_TOP, 100, 100)
+        self.screen.set_clip(clip)
+        self.board._draw_power_range(self.snapshot, center, 6.0, POWER_RANGE_COLOR)
+        self.assertEqual(self.screen.get_clip(), clip)
 
     def test_leaving_map_or_cancelling_build_clears_hover_range(self) -> None:
         gui = CriticalGridGUI()
